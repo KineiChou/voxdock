@@ -68,6 +68,8 @@ The service listens inside the container on `0.0.0.0:8787`, while the host publi
 
 For a real container configuration, keep `/data`, the container listen address and relative `/config` secret references. Set an accessible private backend URL; container loopback is not the host's example backend. `TELEGRAM_API_ID`, `TELEGRAM_TARGET_ID` and `WHATSAPP_TARGET_PHONE` are forwarded from the operator environment. A configured channel may still be unavailable if Linux native loading or authorization fails.
 
+On SELinux-enforcing hosts, apply container labels to the dedicated bind mounts in a deployment override: `:z` for a configuration/secret shared by both containers, and `:Z` for each private data directory. Keep labels scoped to application files. Store a systemd `EnvironmentFile` under `/etc/voxdock/` with restricted permissions and restore its normal `/etc` context. An environment file under an arbitrary `/srv` directory labeled `var_t` was rejected by systemd on the tested Rocky Linux host; moving it to `/etc` with `etc_t` resolved startup without disabling SELinux. Review directory ownership against the configured container UID before starting.
+
 ## Optional WaCalls sidecar
 
 WhatsApp uses the same call coordinator as Telegram, with a paired WaCalls account and 16 kHz PCM. The implementation remains experimental until real-call acceptance. Running this sidecar alone does not enable calling.
