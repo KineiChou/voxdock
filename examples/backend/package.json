@@ -1,0 +1,21 @@
+{
+  "name": "@voxdock/example-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/server.ts",
+  "scripts": {
+    "start": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@voxdock/backend": "workspace:*",
+    "@voxdock/contracts": "workspace:*",
+    "@sinclair/typebox": "0.34.41",
+    "better-sqlite3": "12.2.0",
+    "fastify": "5.12.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "7.6.13",
+    "@voxdock/core": "workspace:*"
+  }
+}
