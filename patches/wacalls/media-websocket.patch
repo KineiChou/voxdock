@@ -1,0 +1,592 @@
+diff --git a/cmd/server/callregistry.go b/cmd/server/callregistry.go
+index d8be9bd..e3f2348 100644
+--- a/cmd/server/callregistry.go
++++ b/cmd/server/callregistry.go
+@@ -6,9 +6,14 @@ import (
+ 	"wacalls/internal/voip/call"
+ )
+ 
++type pcmSink interface {
++	WritePCM([]float32) error
++	Close()
++}
++
+ type activeCall struct {
+ 	cm     *call.CallManager
+-	bridge *Bridge
++	bridge pcmSink
+ }
+ 
+ type callRegistry struct {
+@@ -50,11 +55,11 @@ func (r *callRegistry) count() int {
+ 	return len(r.calls)
+ }
+ 
+-func (r *callRegistry) setBridge(callID string, b *Bridge) (*Bridge, bool) {
++func (r *callRegistry) setBridge(callID string, b pcmSink) (pcmSink, bool) {
+ 	r.mu.Lock()
+ 	defer r.mu.Unlock()
+ 	ac, ok := r.calls[callID]
+-	if !ok {
++	if !ok || ac.bridge != nil {
+ 		return nil, false
+ 	}
+ 	oldB := ac.bridge
+@@ -72,3 +77,16 @@ func (r *callRegistry) drain() []*activeCall {
+ 	r.calls = map[string]*activeCall{}
+ 	return out
+ }
++
++func (r *callRegistry) writePCM(callID string, pcm []float32) {
++	r.mu.Lock()
++	ac, ok := r.calls[callID]
++	var sink pcmSink
++	if ok {
++		sink = ac.bridge
++	}
++	r.mu.Unlock()
++	if sink != nil {
++		_ = sink.WritePCM(pcm)
++	}
++}
+diff --git a/cmd/server/httpapi.go b/cmd/server/httpapi.go
+index 880ab22..13b7ae5 100644
+--- a/cmd/server/httpapi.go
++++ b/cmd/server/httpapi.go
+@@ -14,6 +14,10 @@ import (
+ 
+ func (s *server) routes() http.Handler {
+ 	mux := http.NewServeMux()
++	if s.mediaAuth != nil {
++		mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/media-token", s.handleMediaToken)
++		mux.HandleFunc("GET /api/sessions/{sid}/calls/{id}/media", s.handleMedia)
++	}
+ 
+ 	mux.HandleFunc("GET /api/sessions", s.handleSessionList)
+ 	mux.HandleFunc("POST /api/sessions", s.handleSessionCreate)
+@@ -217,10 +221,14 @@ func (s *server) doWebRTC(sess *Session, w http.ResponseWriter, r *http.Request)
+ 	bridge.OnBrowserPCM = func(pcm []float32) {
+ 		ac.cm.FeedCapturedPCM(pcm)
+ 	}
++	if _, attached := sess.reg.setBridge(callID, bridge); !attached {
++		bridge.Close()
++		writeJSON(w, http.StatusConflict, map[string]string{"error": "media already attached or call ended"})
++		return
++	}
+ 	bridge.OnTerminalICE = func() {
+ 		go sess.terminateCall(callID, core.EndCallReasonUserEnded)
+ 	}
+-	sess.setBridge(callID, bridge)
+ 	writeJSON(w, http.StatusOK, map[string]string{"sdp_answer": answer})
+ }
+ 
+diff --git a/cmd/server/media.go b/cmd/server/media.go
+new file mode 100644
+index 0000000..0ccc32c
+--- /dev/null
++++ b/cmd/server/media.go
+@@ -0,0 +1,233 @@
++package main
++
++import (
++	"context"
++	"crypto/rand"
++	"crypto/subtle"
++	"encoding/base64"
++	"errors"
++	"net/http"
++	"os"
++	"strings"
++	"sync"
++	"time"
++
++	"github.com/coder/websocket"
++	"wacalls/internal/voip/core"
++	"wacalls/internal/voip/media"
++)
++
++const maxPCMBytes = 6400 // 200 ms, mono PCM16 at 16 kHz.
++type mediaGrant struct {
++	session, call string
++	expires       time.Time
++}
++type mediaAuth struct {
++	mu     sync.Mutex
++	secret string
++	grants map[string]mediaGrant
++}
++
++func mediaAuthFromEnv() (*mediaAuth, error) {
++	path := os.Getenv("WACALLS_MEDIA_SECRET_FILE")
++	if path == "" {
++		return nil, nil
++	}
++	info, err := os.Stat(path)
++	if err != nil || !info.Mode().IsRegular() || info.Size() > 4096 {
++		return nil, errors.New("invalid media secret file")
++	}
++	data, err := os.ReadFile(path)
++	if err != nil {
++		return nil, errors.New("cannot read media secret file")
++	}
++	secret := strings.TrimSpace(string(data))
++	if len(secret) < 32 || strings.ContainsAny(secret, "\r\n") {
++		return nil, errors.New("invalid media secret")
++	}
++	return &mediaAuth{secret: secret, grants: make(map[string]mediaGrant)}, nil
++}
++func bearer(r *http.Request) string {
++	h := r.Header.Get("Authorization")
++	if !strings.HasPrefix(h, "Bearer ") {
++		return ""
++	}
++	return strings.TrimPrefix(h, "Bearer ")
++}
++func (a *mediaAuth) authorized(r *http.Request) bool {
++	return subtle.ConstantTimeCompare([]byte(bearer(r)), []byte(a.secret)) == 1
++}
++func (a *mediaAuth) issue(session, call string, now time.Time) (string, bool) {
++	a.mu.Lock()
++	defer a.mu.Unlock()
++	for token, grant := range a.grants {
++		if !now.Before(grant.expires) {
++			delete(a.grants, token)
++		}
++	}
++	if len(a.grants) >= 128 {
++		return "", false
++	}
++	bytes := make([]byte, 32)
++	if _, err := rand.Read(bytes); err != nil {
++		return "", false
++	}
++	token := base64.RawURLEncoding.EncodeToString(bytes)
++	a.grants[token] = mediaGrant{session, call, now.Add(30 * time.Second)}
++	return token, true
++}
++func (a *mediaAuth) consume(token, session, call string, now time.Time) bool {
++	a.mu.Lock()
++	defer a.mu.Unlock()
++	grant, ok := a.grants[token]
++	if !ok {
++		return false
++	}
++	delete(a.grants, token)
++	return grant.session == session && grant.call == call && now.Before(grant.expires)
++}
++func (s *server) handleMediaToken(w http.ResponseWriter, r *http.Request) {
++	w.Header().Set("Cache-Control", "no-store")
++	if !s.mediaAuth.authorized(r) {
++		http.Error(w, "unauthorized", http.StatusUnauthorized)
++		return
++	}
++	sess := s.sessionByID(w, r.PathValue("sid"))
++	if sess == nil {
++		return
++	}
++	if _, ok := sess.reg.get(r.PathValue("id")); !ok {
++		http.Error(w, "no such call", http.StatusNotFound)
++		return
++	}
++	now := time.Now()
++	token, ok := s.mediaAuth.issue(sess.id, r.PathValue("id"), now)
++	if !ok {
++		http.Error(w, "media token capacity", http.StatusServiceUnavailable)
++		return
++	}
++	writeJSON(w, http.StatusOK, map[string]any{"token": token, "expires_at": now.Add(30 * time.Second).UnixMilli()})
++}
++func (s *server) handleMedia(w http.ResponseWriter, r *http.Request) {
++	sid, id := r.PathValue("sid"), r.PathValue("id")
++	if r.URL.RawQuery != "" || !s.mediaAuth.consume(bearer(r), sid, id, time.Now()) {
++		http.Error(w, "unauthorized", http.StatusUnauthorized)
++		return
++	}
++	sess := s.sessionByID(w, sid)
++	if sess == nil {
++		return
++	}
++	ac, ok := sess.reg.get(id)
++	if !ok {
++		http.Error(w, "no such call", http.StatusNotFound)
++		return
++	}
++	conn, err := websocket.Accept(w, r, nil)
++	if err != nil {
++		return
++	}
++	bridge := newSocketMedia(conn)
++	if _, ok := sess.reg.setBridge(id, bridge); !ok {
++		bridge.Close()
++		return
++	}
++	defer bridge.Close()
++	defer func() {
++		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
++		defer cancel()
++		if err := ac.cm.EndCall(ctx, core.EndCallReasonUserEnded); err != nil {
++			s.log.Error("media disconnect hangup unconfirmed")
++		}
++	}()
++	bridge.run(ac.cm.FeedCapturedPCM)
++}
++
++type socketMedia struct {
++	conn   *websocket.Conn
++	ctx    context.Context
++	cancel context.CancelFunc
++	queue  chan []byte
++	once   sync.Once
++	mu     sync.Mutex
++}
++
++func newSocketMedia(conn *websocket.Conn) *socketMedia {
++	ctx, cancel := context.WithCancel(context.Background())
++	conn.SetReadLimit(maxPCMBytes)
++	return &socketMedia{conn: conn, ctx: ctx, cancel: cancel, queue: make(chan []byte, 8)}
++}
++func (b *socketMedia) Close() { b.mu.Lock(); defer b.mu.Unlock(); b.closeLocked() }
++func (b *socketMedia) closeLocked() {
++	b.once.Do(func() {
++		b.cancel()
++		_ = b.conn.CloseNow()
++		for {
++			select {
++			case <-b.queue:
++			default:
++				return
++			}
++		}
++	})
++}
++func (b *socketMedia) WritePCM(pcm []float32) error {
++	b.mu.Lock()
++	defer b.mu.Unlock()
++	if len(pcm) > maxPCMBytes/2 {
++		b.closeLocked()
++		return errors.New("PCM frame exceeds limit")
++	}
++	if len(pcm) == 0 {
++		return nil
++	}
++	select {
++	case <-b.ctx.Done():
++		return errors.New("media closed")
++	default:
++	}
++	data := media.PCMFloat32ToInt16LE(pcm)
++	select {
++	case b.queue <- data:
++		return nil
++	default:
++		b.closeLocked()
++		return errors.New("media output overflow")
++	}
++}
++func (b *socketMedia) write(kind websocket.MessageType, data []byte) error {
++	ctx, cancel := context.WithTimeout(b.ctx, 2*time.Second)
++	defer cancel()
++	return b.conn.Write(ctx, kind, data)
++}
++func (b *socketMedia) run(feed func([]float32)) {
++	if b.write(websocket.MessageText, []byte(`{"type":"media.ready","format":"pcm_s16le","sample_rate":16000,"channels":1}`)) != nil {
++		return
++	}
++	done := make(chan struct{})
++	go func() {
++		defer close(done)
++		defer b.Close()
++		for {
++			select {
++			case <-b.ctx.Done():
++				return
++			case data := <-b.queue:
++				if b.write(websocket.MessageBinary, data) != nil {
++					return
++				}
++			}
++		}
++	}()
++	defer func() { b.Close(); <-done }()
++	// The producer must pace captured audio, including silence; missing input ends the bridge.
++	for {
++		ctx, cancel := context.WithTimeout(b.ctx, 5*time.Second)
++		kind, data, err := b.conn.Read(ctx)
++		cancel()
++		if err != nil || kind != websocket.MessageBinary || len(data) == 0 || len(data)%2 != 0 || len(data) > maxPCMBytes {
++			return
++		}
++		feed(media.PCMInt16LEToFloat32(data))
++	}
++}
+diff --git a/cmd/server/media_test.go b/cmd/server/media_test.go
+new file mode 100644
+index 0000000..bf58643
+--- /dev/null
++++ b/cmd/server/media_test.go
+@@ -0,0 +1,178 @@
++package main
++
++import (
++	"context"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/coder/websocket"
++)
++
++func TestMediaGrantBindingExpiryAndReplay(t *testing.T) {
++	a := &mediaAuth{secret: strings.Repeat("s", 32), grants: make(map[string]mediaGrant)}
++	now := time.Now()
++	token, ok := a.issue("s", "c", now)
++	if !ok {
++		t.Fatal("issue")
++	}
++	if a.consume(token, "s", "other", now) || a.consume(token, "s", "c", now) {
++		t.Fatal("cross-call token accepted or replayed")
++	}
++	token, _ = a.issue("s", "c", now)
++	if a.consume(token, "s", "c", now.Add(30*time.Second)) {
++		t.Fatal("expired token accepted")
++	}
++	token, _ = a.issue("s", "c", now)
++	if !a.consume(token, "s", "c", now) || a.consume(token, "s", "c", now) {
++		t.Fatal("single use failed")
++	}
++	for i := 0; i < 128; i++ {
++		if _, ok := a.issue("s", "c", now); !ok {
++			t.Fatal("premature capacity")
++		}
++	}
++	if _, ok := a.issue("s", "c", now); ok {
++		t.Fatal("unbounded grants")
++	}
++	if _, ok := a.issue("s", "c", now.Add(time.Minute)); !ok {
++		t.Fatal("expired grants not released")
++	}
++	req := httptest.NewRequest("POST", "/", nil)
++	req.Header.Set("Authorization", a.secret)
++	if a.authorized(req) {
++		t.Fatal("missing Bearer prefix accepted")
++	}
++	req.Header.Set("Authorization", "Bearer "+a.secret)
++	if !a.authorized(req) {
++		t.Fatal("valid secret refused")
++	}
++}
++
++func TestMediaTokenRouteRequiresSecretAndExistingCall(t *testing.T) {
++	a := &mediaAuth{secret: strings.Repeat("s", 32), grants: make(map[string]mediaGrant)}
++	sess := &Session{id: "s", reg: newCallRegistry()}
++	sess.reg.add("c", &activeCall{})
++	s := &server{mediaAuth: a, sessions: &SessionManager{sessions: map[string]*Session{"s": sess}}}
++	h := s.routes()
++	for _, tc := range []struct {
++		path, auth string
++		want       int
++	}{
++		{"/api/sessions/s/calls/c/media-token", "", 401},
++		{"/api/sessions/s/calls/other/media-token", "Bearer " + a.secret, 404},
++		{"/api/sessions/s/calls/c/media-token", "Bearer " + a.secret, 200},
++	} {
++		req := httptest.NewRequest("POST", tc.path, nil)
++		req.Header.Set("Authorization", tc.auth)
++		out := httptest.NewRecorder()
++		h.ServeHTTP(out, req)
++		if out.Code != tc.want {
++			t.Fatalf("want %d got %d", tc.want, out.Code)
++		}
++	}
++}
++
++func TestMediaSocketPCMAndInvalidFrameCleanup(t *testing.T) {
++	bridges := make(chan *socketMedia, 1)
++	samples := make(chan []float32, 1)
++	stopped := make(chan struct{})
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		conn, err := websocket.Accept(w, r, nil)
++		if err != nil {
++			return
++		}
++		b := newSocketMedia(conn)
++		bridges <- b
++		b.run(func(pcm []float32) { samples <- pcm })
++		close(stopped)
++	}))
++	defer server.Close()
++	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
++	defer cancel()
++	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer conn.CloseNow()
++	b := <-bridges
++	kind, ready, err := conn.Read(ctx)
++	if err != nil || kind != websocket.MessageText || !strings.Contains(string(ready), "16000") {
++		t.Fatal("missing ready")
++	}
++	if err := conn.Write(ctx, websocket.MessageBinary, []byte{0, 64, 0, 192}); err != nil {
++		t.Fatal(err)
++	}
++	got := <-samples
++	if len(got) != 2 || got[0] != 0.5 || got[1] != -0.5 {
++		t.Fatalf("unexpected samples %v", got)
++	}
++	if err := b.WritePCM([]float32{0.5, -0.5}); err != nil {
++		t.Fatal(err)
++	}
++	kind, pcm, err := conn.Read(ctx)
++	if err != nil || kind != websocket.MessageBinary || len(pcm) != 4 {
++		t.Fatal("missing output pcm")
++	}
++	_ = conn.Write(ctx, websocket.MessageBinary, []byte{1})
++	select {
++	case <-stopped:
++	case <-ctx.Done():
++		t.Fatal("invalid frame did not release socket")
++	}
++}
++
++func TestMediaAttachmentExclusive(t *testing.T) {
++	r := newCallRegistry()
++	r.add("c", &activeCall{})
++	first := &Bridge{}
++	if _, ok := r.setBridge("c", first); !ok {
++		t.Fatal("first attach failed")
++	}
++	if _, ok := r.setBridge("c", &Bridge{}); ok {
++		t.Fatal("second consumer replaced media")
++	}
++	r.writePCM("c", nil)
++	r.remove("c")
++	if _, ok := r.setBridge("c", &Bridge{}); ok {
++		t.Fatal("ended call accepted consumer")
++	}
++}
++
++func TestMediaOutputOverflowClosesAndReleasesAudio(t *testing.T) {
++	bridges := make(chan *socketMedia, 1)
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		conn, err := websocket.Accept(w, r, nil)
++		if err != nil {
++			return
++		}
++		b := newSocketMedia(conn)
++		bridges <- b
++		<-b.ctx.Done()
++	}))
++	defer server.Close()
++	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
++	defer cancel()
++	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer conn.CloseNow()
++	b := <-bridges
++	for i := 0; i < 8; i++ {
++		if err := b.WritePCM(make([]float32, 320)); err != nil {
++			t.Fatal(err)
++		}
++	}
++	if err := b.WritePCM(make([]float32, 320)); err == nil {
++		t.Fatal("overflow accepted")
++	}
++	if len(b.queue) != 0 {
++		t.Fatal("audio retained after closure")
++	}
++	if err := b.WritePCM(make([]float32, 320)); err == nil {
++		t.Fatal("closed media accepted audio")
++	}
++}
+diff --git a/cmd/server/server.go b/cmd/server/server.go
+index f4bfce6..37a37cc 100644
+--- a/cmd/server/server.go
++++ b/cmd/server/server.go
+@@ -11,6 +11,7 @@ import (
+ )
+ 
+ type server struct {
++	mediaAuth *mediaAuth
+ 	broker    *Broker
+ 	sessions  *SessionManager
+ 	log       *slog.Logger
+@@ -28,6 +29,10 @@ func openDB(dbPath string) (*sql.DB, error) {
+ }
+ 
+ func newServer(ctx context.Context, dbPath, staticDir string, maxCalls int, log *slog.Logger) (*server, error) {
++	auth, err := mediaAuthFromEnv()
++	if err != nil {
++		return nil, err
++	}
+ 	db, err := openDB(dbPath)
+ 	if err != nil {
+ 		return nil, err
+@@ -50,5 +55,5 @@ func newServer(ctx context.Context, dbPath, staticDir string, maxCalls int, log
+ 	mgr := newSessionManager(ctx, container, broker, store, waLogger, log, maxCalls)
+ 	broker.SnapshotFn = mgr.snapshotEvents
+ 
+-	return &server{broker: broker, sessions: mgr, log: log, staticDir: staticDir}, nil
++	return &server{mediaAuth: auth, broker: broker, sessions: mgr, log: log, staticDir: staticDir}, nil
+ }
+diff --git a/cmd/server/session.go b/cmd/server/session.go
+index 38092f3..b1df59a 100644
+--- a/cmd/server/session.go
++++ b/cmd/server/session.go
+@@ -87,13 +87,7 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
+ 		s.removeCall(c.CallID)
+ 		s.mgr.broker.endCall(c.CallID, string(c.StateData.EndReason))
+ 	}
+-	cm.OnPeerAudio = func(pcm16 []float32) {
+-		ac, ok := s.reg.get(callID)
+-		if !ok || ac.bridge == nil {
+-			return
+-		}
+-		_ = ac.bridge.WritePCM(pcm16)
+-	}
++	cm.OnPeerAudio = func(pcm16 []float32) { s.reg.writePCM(callID, pcm16) }
+ }
+ 
+ func (s *Session) startOutgoing(ctx context.Context, peer types.JID, isVideo bool) (string, error) {
+@@ -228,17 +222,6 @@ func (s *Session) info() SessionInfo {
+ 	return SessionInfo{ID: s.id, Name: s.name, JID: jid, State: a.State, Paired: a.Paired || jid != ""}
+ }
+ 
+-func (s *Session) setBridge(callID string, b *Bridge) {
+-	oldB, found := s.reg.setBridge(callID, b)
+-	if !found {
+-		b.Close()
+-		return
+-	}
+-	if oldB != nil {
+-		oldB.Close()
+-	}
+-}
+-
+ func (s *Session) removeCall(callID string) {
+ 	ac, ok := s.reg.remove(callID)
+ 	if !ok {
+diff --git a/go.mod b/go.mod
+index f308a99..e0f8b7f 100644
+--- a/go.mod
++++ b/go.mod
+@@ -3,6 +3,7 @@ module wacalls
+ go 1.26.4
+ 
+ require (
++	github.com/coder/websocket v1.8.15
+ 	github.com/mdp/qrterminal/v3 v3.2.1
+ 	github.com/pion/webrtc/v4 v4.2.15
+ 	github.com/rs/zerolog v1.35.1
+@@ -14,7 +15,6 @@ require (
+ require (
+ 	filippo.io/edwards25519 v1.2.0 // indirect
+ 	github.com/beeper/argo-go v1.1.2 // indirect
+-	github.com/coder/websocket v1.8.15 // indirect
+ 	github.com/dustin/go-humanize v1.0.1 // indirect
+ 	github.com/elliotchance/orderedmap/v3 v3.1.0 // indirect
+ 	github.com/google/uuid v1.6.0 // indirect
