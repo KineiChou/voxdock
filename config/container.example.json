@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "service": { "listen": "0.0.0.0:8787", "data_dir": "/data" },
+  "security": { "control_token_file": "control.token" },
+  "calling": { "enabled": false },
+  "channels": { "telegram": { "enabled": false }, "whatsapp": { "enabled": false } },
+  "targets": []
+}

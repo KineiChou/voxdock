@@ -1,0 +1,32 @@
+# Acceptance evidence
+
+Evidence date: 2026-09-16. This repository is a source alpha, not an accepted production voice service. Each claim below is limited to the environment and check performed; a fixture or successful build does not establish a real phone conversation.
+
+| Area | Evidence available | Still required |
+| --- | --- | --- |
+| Control/state | Automated tests for durable admission, idempotency, state transitions, recovery and retention | Deployed process failure/recovery exercises with real platform state |
+| Backend | Contract, correlation, authenticated requests, signed-event and receipt tests; independent SQLite example | Operator backend integration and actual business execution |
+| Live | Injected primary-WebSocket tests for startup, audio, delegation, commentary and finite finalization | Account access, a paid session, observed greeting, interruption and returned final usage |
+| Audio | Bounded frame/pacing and injected persistent-FFmpeg process tests | Real FFmpeg duplex sample counts, latency, drift, clipping and long-run audio quality |
+| Telegram | Account-free NTgCalls load/create/external-input/cleanup on macOS arm64 Node 24.21.0; signaling fixtures | Login and target verification, genuine outgoing/incoming calls, handset events and duplex voice |
+| WhatsApp | Pinned Go server tests, race-enabled media tests, loopback PCM and host/Linux amd64 builds; Node client fixtures | Combined deployed Node/Go operation, account pairing, real calls and full runtime admission |
+| Packaging | Configuration/schema and Compose/static checks | Linux container builds/runs, Linux native loading, permissions and persistence after restart |
+| Operational endurance | Bounded cleanup/queue behavior covered locally | 24-hour idle/active endurance, resource use and independent platform disconnection tests |
+| Distribution | Source license and selected dependency notices | Complete binary/source/notice inventory, immutable image digests and a release audit |
+
+Native evidence and exact upstream revisions are in [platforms](platforms.md); Go patch/build evidence is in [WaCalls media](wacalls-media.md). Live and PCM interpretation are documented in [Live/audio](live.md). CI status should be read for the tested commit; no historical green run proves a later change or a live platform capability.
+
+## Real-call acceptance record
+
+For each platform, record the source commit, dependency versions, host OS/architecture, client/device versions, account roles (redacted), configured limits, test start/end, expected behavior and observed evidence. At minimum, verify:
+
+1. Correct fixed recipient; unrelated incoming callers cannot gain admission; one-call capacity applies to incoming and outgoing activity.
+2. Answer/reject/busy/missed/cancel behavior and the difference between connected, audio-ready and actually heard speech.
+3. Fresh business context before dialing and greeting; obsolete notifications are not read as current facts.
+4. A continuous two-way conversation, interruption and later corrections associated with the same delegation and a newer context revision.
+5. A durable backend receipt before claiming acceptance, with no duplicate side effect after retry or restart.
+6. Ring/duration/daily limits, media loss, platform disconnect, server shutdown and a crash during uncertain side effects.
+7. Final platform termination, Live usage or an explicit incomplete marker, consistent audit export and no silent automatic redial.
+8. Retention cleanup, consistent backup/restore and absence of raw audio/credentials in persistent records and logs.
+
+Attach redacted evidence to the relevant issue/PR. Do not substitute a model summary, a browser screenshot, an HTTP 200 or a commentary append acknowledgment for platform/receipt/usage evidence. Real platform and paid API checks are opt-in; normal tests must remain credential-free.

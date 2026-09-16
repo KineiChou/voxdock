@@ -1,0 +1,37 @@
+# Optional local sidecar. Its unauthenticated upstream REST API must remain private.
+FROM golang:1.26.4-bookworm AS source
+WORKDIR /source
+RUN git init \
+ && git remote add origin https://github.com/JotaDev66/WaCalls.git \
+ && git fetch --depth 1 origin edeb31f0427aba896639db503153b777a405eccf \
+ && git checkout --detach FETCH_HEAD \
+ && test "$(git rev-parse HEAD)" = edeb31f0427aba896639db503153b777a405eccf
+COPY patches/wacalls/media-websocket.patch /tmp/media-websocket.patch
+RUN git apply --check /tmp/media-websocket.patch && git apply /tmp/media-websocket.patch
+
+FROM node:24.21.0-bookworm-slim AS client
+WORKDIR /client
+COPY --from=source /source/client/ ./
+RUN npm ci && npm run build
+
+FROM source AS server
+RUN go test ./cmd/server \
+ && CGO_ENABLED=0 go build -trimpath -o /out/wacalls-server ./cmd/server \
+ && go list -m -json all > /out/dependencies.json \
+ && git rev-parse HEAD > /out/source-revision.txt \
+ && sha256sum /tmp/media-websocket.patch /out/wacalls-server > /out/checksums.txt
+
+FROM debian:bookworm-slim
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --uid 1000 --create-home wacalls
+COPY --from=server /out/ /opt/wacalls/
+COPY --from=source /source/LICENSE /opt/wacalls/licenses/WaCalls-LICENSE
+COPY --from=source /source/internal/voip/media/mlow/LICENSE /opt/wacalls/licenses/MLow-LICENSE
+COPY --from=client /client/dist/ /opt/wacalls/client/
+WORKDIR /data
+USER wacalls
+EXPOSE 8080
+ENTRYPOINT ["/opt/wacalls/wacalls-server"]
+CMD ["-addr", ":8080", "-db", "/data/wacalls.db", "-static", "/opt/wacalls/client", "-max-calls-per-session", "1"]

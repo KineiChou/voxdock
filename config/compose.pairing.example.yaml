@@ -1,0 +1,4 @@
+# Temporary loopback-only access to the upstream pairing UI; remove after setup.
+services:
+  wacalls:
+    ports: ["127.0.0.1:8080:8080"]
