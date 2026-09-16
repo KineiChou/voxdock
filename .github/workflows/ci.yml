@@ -18,6 +18,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+      - name: Run the real CLI with calling disabled
+        run: node --import tsx scripts/smoke-control.mts
       - name: Check native Telegram binding without an account
         run: node --import tsx packages/telegram/scripts/native-media-smoke.mts
       - name: Check actual streaming audio conversion
