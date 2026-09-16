@@ -986,7 +986,7 @@ index 2e225ee..39b2485 100644
  	lid := m.sock.OwnLID()
  	if !lid.IsEmpty() {
 diff --git a/internal/voip/call/callmanager_relay.go b/internal/voip/call/callmanager_relay.go
-index 8e6cce9..b0dbcf8 100644
+index 8e6cce9..0015eb0 100644
 --- a/internal/voip/call/callmanager_relay.go
 +++ b/internal/voip/call/callmanager_relay.go
 @@ -23,7 +23,7 @@ var _ RelayTransport = (*transport.SctpRelayManager)(nil)
@@ -998,10 +998,12 @@ index 8e6cce9..b0dbcf8 100644
  		if err := call.ApplyTransition(Transition{Type: TransitionMediaConnected}); err == nil {
  			m.emitState()
  			m.startSilenceKeepaliveLocked()
-@@ -62,6 +62,14 @@ func buildRelayConfigs(endpoints []core.RelayEndpoint) []transport.RelayConfig {
+@@ -62,6 +62,16 @@ func buildRelayConfigs(endpoints []core.RelayEndpoint) []transport.RelayConfig {
  }
  
  func (m *CallManager) connectRelays(endpoints []core.RelayEndpoint) {
++	// Serialize relay configuration with termination. The pinned relay callbacks do
++	// not synchronously call EndCall; introducing such a callback would deadlock.
 +	m.endMu.Lock()
 +	defer m.endMu.Unlock()
 +	m.mu.Lock()
@@ -1014,28 +1016,76 @@ index 8e6cce9..b0dbcf8 100644
  	if len(relays) == 0 {
  		m.log.Error("no usable relay configs")
 diff --git a/internal/voip/call/callmanager_signaling.go b/internal/voip/call/callmanager_signaling.go
-index 145c280..ad921be 100644
+index 145c280..843076a 100644
 --- a/internal/voip/call/callmanager_signaling.go
 +++ b/internal/voip/call/callmanager_signaling.go
-@@ -98,7 +98,7 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
+@@ -97,8 +97,9 @@ func (m *CallManager) HandleCallOffer(ctx context.Context, node *waBinary.Node,
+ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node, peerJid types.JID) {
  	m.mu.Lock()
  	call := m.currentCall
++	stopped := call == nil || call.Termination != ""
  	m.mu.Unlock()
 -	if call == nil {
-+	if call == nil || call.Termination != "" {
++	if stopped {
  		return
  	}
  	info := signaling.ExtractNodeInfo(node)
-@@ -176,7 +176,7 @@ func (m *CallManager) HandleCallTransport(ctx context.Context, node *waBinary.No
+@@ -109,6 +110,10 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
+ 	if signaling.NeedsDecryption(info.Tag) {
+ 		if peerKey, err := signaling.DecryptCallKeyInNode(ctx, m.sock, info.InnerNode, peerJid); err == nil && peerKey != nil {
+ 			m.mu.Lock()
++			if call.Termination != "" {
++				m.mu.Unlock()
++				return
++			}
+ 			if call.EncryptionKey != nil && !equalBytes(call.EncryptionKey, peerKey) {
+ 				m.reinitSrtpLocked(peerKey, peerJid)
+ 			}
+@@ -117,6 +122,10 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
+ 	}
+ 
+ 	m.mu.Lock()
++	if call.Termination != "" {
++		m.mu.Unlock()
++		return
++	}
+ 	_ = call.ApplyTransition(Transition{Type: TransitionRemoteAccepted})
+ 	m.emitState()
+ 	m.acceptedByJid = peerJid.String()
+@@ -161,6 +170,10 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
+ 
+ 	if hasConn {
+ 		m.mu.Lock()
++		if call.Termination != "" {
++			m.mu.Unlock()
++			return
++		}
+ 		if err := call.ApplyTransition(Transition{Type: TransitionMediaConnected}); err == nil {
+ 			m.emitState()
+ 			m.startSilenceKeepaliveLocked()
+@@ -175,8 +188,9 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
+ func (m *CallManager) HandleCallTransport(ctx context.Context, node *waBinary.Node, peerJid types.JID) {
  	m.mu.Lock()
  	call := m.currentCall
++	stopped := call == nil || call.Termination != ""
  	m.mu.Unlock()
 -	if call == nil {
-+	if call == nil || call.Termination != "" {
++	if stopped {
  		return
  	}
  	info := signaling.ExtractNodeInfo(node)
-@@ -213,7 +213,7 @@ func (m *CallManager) HandleCallAck(ctx context.Context, node *waBinary.Node) {
+@@ -188,6 +202,10 @@ func (m *CallManager) HandleCallTransport(ctx context.Context, node *waBinary.No
+ 		"relays", len(relays), "already_connected", m.relay.HasConnection())
+ 	if len(relays) > 0 && !m.relay.HasConnection() {
+ 		m.mu.Lock()
++		if call.Termination != "" {
++			m.mu.Unlock()
++			return
++		}
+ 		if call.RelayData == nil {
+ 			call.RelayData = &core.RelayData{}
+ 		}
+@@ -213,7 +231,7 @@ func (m *CallManager) HandleCallAck(ctx context.Context, node *waBinary.Node) {
  
  	m.mu.Lock()
  	call := m.currentCall
@@ -1044,7 +1094,7 @@ index 145c280..ad921be 100644
  		m.mu.Unlock()
  		return
  	}
-@@ -261,11 +261,16 @@ func (m *CallManager) HandleCallAck(ctx context.Context, node *waBinary.Node) {
+@@ -261,11 +279,16 @@ func (m *CallManager) HandleCallAck(ctx context.Context, node *waBinary.Node) {
  func (m *CallManager) HandleCallTerminate(node *waBinary.Node) {
  	m.mu.Lock()
  	call := m.currentCall
@@ -1077,15 +1127,16 @@ index 03c0a96..d7d855d 100644
  	CallCreator     string
 diff --git a/internal/voip/call/termination_test.go b/internal/voip/call/termination_test.go
 new file mode 100644
-index 0000000..b41fdeb
+index 0000000..12caa00
 --- /dev/null
 +++ b/internal/voip/call/termination_test.go
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,192 @@
 +package call
 +
 +import (
 +	"context"
 +	"errors"
++	"sync"
 +	"testing"
 +	"time"
 +
@@ -1093,6 +1144,7 @@ index 0000000..b41fdeb
 +	"go.mau.fi/whatsmeow/types"
 +	"wacalls/internal/voip/core"
 +	"wacalls/internal/voip/signaling"
++	"wacalls/internal/voip/transport"
 +)
 +
 +type terminationSocket struct {
@@ -1210,5 +1262,64 @@ index 0000000..b41fdeb
 +	m.onRelayConnected()
 +	if m.CurrentCall().StateData.State != core.CallStateConnecting || m.keepaliveStop != nil {
 +		t.Fatal("late relay restarted terminated media")
++	}
++}
++
++func TestSignalingTerminationGuardConcurrentAccess(t *testing.T) {
++	m := terminationManager(func(context.Context, waBinary.Node) (*waBinary.Node, error) { return nil, nil })
++	var wg sync.WaitGroup
++	wg.Add(2)
++	go func() {
++		defer wg.Done()
++		for i := 0; i < 5000; i++ {
++			m.mu.Lock()
++			if i%2 == 0 {
++				m.currentCall.Termination = "unconfirmed"
++			} else {
++				m.currentCall.Termination = ""
++			}
++			m.mu.Unlock()
++		}
++	}()
++	go func() {
++		defer wg.Done()
++		for i := 0; i < 5000; i++ {
++			m.HandleCallAccept(context.Background(), &waBinary.Node{}, types.JID{})
++			m.HandleCallTransport(context.Background(), &waBinary.Node{}, types.JID{})
++		}
++	}()
++	wg.Wait()
++}
++
++type terminationRelay struct {
++	RelayTransport
++	connected func()
++}
++
++func (*terminationRelay) SetSsrc(uint32)                            {}
++func (*terminationRelay) SetSubscriptionSsrc(uint32)                {}
++func (*terminationRelay) ConnectedCount() int                       { return 1 }
++func (*terminationRelay) Cleanup()                                  {}
++func (r *terminationRelay) ConfigureRelays([]transport.RelayConfig) { r.connected() }
++
++func TestRelayConnectedCallbackDoesNotReenterTerminationLock(t *testing.T) {
++	m := terminationManager(func(_ context.Context, n waBinary.Node) (*waBinary.Node, error) { return ackFor(n), nil })
++	m.currentCall.StateData.State = core.CallStateConnecting
++	m.relay = &terminationRelay{connected: m.onRelayConnected}
++	done := make(chan struct{})
++	go func() {
++		m.connectRelays([]core.RelayEndpoint{{IP: "127.0.0.1", Protocol: 0, Key: "fixture", RawToken: []byte{1}}})
++		close(done)
++	}()
++	select {
++	case <-done:
++	case <-time.After(time.Second):
++		t.Fatal("relay callback deadlocked configuration")
++	}
++	if m.CurrentCall().StateData.State != core.CallStateActive {
++		t.Fatal("connected callback not applied")
++	}
++	if err := m.EndCall(context.Background(), core.EndCallReasonUserEnded); err != nil {
++		t.Fatal(err)
 +	}
 +}
