@@ -1,6 +1,6 @@
 # Native platform adapters
 
-Evidence date: 2026-09-16. No accounts were authenticated and no calls were made.
+Evidence dates: 2026-09-16–17. A WhatsApp account reached paired/open on the deployed ARM64 server. Native test results below were originally account-free; real phone calls remain unverified.
 
 ## Locked upstreams
 

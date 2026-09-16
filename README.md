@@ -4,7 +4,7 @@
 
 A self-hosted voice bridge for **Telegram**, **WhatsApp**, and **GPT-Live-1**. Connect your agent backend to a phone conversation: deliver an opening message, receive delegated requests, and track the result against the call that produced it.
 
-**Source alpha.** Both platform paths are implemented; real phone calls and paid Live sessions have not been validated. Start with the paused local service. Account-free Linux CI checks the executable service, native binding and actual streaming audio conversion.
+**Source alpha.** Both platform paths are implemented. WhatsApp pairing and a short paid Live session have passed controlled checks; a complete phone conversation remains unverified. Start with the paused local service. Account-free Linux CI checks the executable service, native binding and actual streaming audio conversion.
 
 ## What it does
 
@@ -21,8 +21,9 @@ Your backend owns task execution, permissions, project routing and long-term mem
 | --- | --- | --- |
 | Control and records | HTTP contracts, durable admission, recovery and event outbox | Automated tests and a paused ARM64 deployment; real account operations unverified |
 | Telegram | MTProto/NTgCalls driver and Live runtime path | Fixtures and account-free native checks; handset calls unverified |
-| GPT-Live-1 | Primary WebSocket, PCM, transcripts, client delegation and finite close | Injected transport tests; account access and real sessions unverified |
-| WhatsApp | WaCalls control/media, stored identity mapping and shared Live runtime | Go builds, loopback PCM and adapter tests; real calls unverified |
+| GPT-Live-1 | Primary WebSocket, PCM, transcripts, client delegation and finite close | Injected transport tests and a short real 16 kHz start/close; handset conversation unverified |
+| WhatsApp | WaCalls control/media, stored identity mapping and shared Live runtime | Go builds, loopback PCM, adapter tests and account pairing; real calls unverified |
+| Text backend | Optional GPT-5.6 Sol forwarding with durable receipts and callbacks | Offline execution/recovery tests and direct provider connectivity; phone delegation unverified |
 | Packaging | Source install and local Docker/Compose definitions | Linux CI and a paused ARM64 server deployment pass; account restore and real calling remain unverified |
 
 See [acceptance evidence and remaining gates](docs/acceptance.md).
@@ -69,7 +70,7 @@ Telegram uses teleproto and NTgCalls. WhatsApp uses a separately built WaCalls p
 - [Engineering decisions](docs/decisions.md) and [contributing](CONTRIBUTING.md)
 - [Engineering fixes and verification](docs/engineering-log.md)
 
-The example backend persists simulation receipts; it does not execute an agent or complete real business tasks. No model-declared success or commentary acknowledgment is treated as proof that an external action succeeded or that speech was heard.
+The example backend defaults to simulation. Its optional [OpenAI mode](docs/backend.md#openai-text-forwarding) sends delegated text to GPT-5.6 Sol and returns answers to the original call. It does not execute code or external actions. No model-declared success or commentary acknowledgment is treated as proof that an external action succeeded or that speech was heard.
 
 ## License
 
