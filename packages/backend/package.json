@@ -1,0 +1,12 @@
+{
+  "name": "@voxdock/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@voxdock/contracts": "workspace:*",
+    "@voxdock/core": "workspace:*",
+    "@sinclair/typebox": "0.34.41"
+  }
+}
