@@ -4,7 +4,7 @@
 
 A self-hosted voice bridge for **Telegram**, **WhatsApp**, and **GPT-Live-1**. Connect your agent backend to a phone conversation: deliver an opening message, receive delegated requests, and track the result against the call that produced it.
 
-**Source alpha.** Both platform paths are implemented. WhatsApp pairing and a short paid Live session have passed controlled checks; a complete phone conversation remains unverified. Start with the paused local service. Account-free Linux CI checks the executable service, native binding and actual streaming audio conversion.
+**Source alpha.** A first WhatsApp call delivered a Chinese opening and a GPT-5.6 Sol answer, but ended unexpectedly with an audio error. Reliable calling remains under validation; Telegram handset calls are unverified. Start with the paused local service. Account-free Linux CI checks the executable service, native binding and actual streaming audio conversion.
 
 ## What it does
 
@@ -21,9 +21,9 @@ Your backend owns task execution, permissions, project routing and long-term mem
 | --- | --- | --- |
 | Control and records | HTTP contracts, durable admission, recovery and event outbox | Automated tests and a paused ARM64 deployment; real account operations unverified |
 | Telegram | MTProto/NTgCalls driver and Live runtime path | Fixtures and account-free native checks; handset calls unverified |
-| GPT-Live-1 | Primary WebSocket, PCM, transcripts, client delegation and finite close | Injected transport tests and a short real 16 kHz start/close; handset conversation unverified |
-| WhatsApp | WaCalls control/media, stored identity mapping and shared Live runtime | Go builds, loopback PCM, adapter tests and account pairing; real calls unverified |
-| Text backend | Optional GPT-5.6 Sol forwarding with durable receipts and callbacks | Offline execution/recovery tests and direct provider connectivity; phone delegation unverified |
+| GPT-Live-1 | Primary WebSocket, PCM, transcripts, client delegation and finite close | Real 16 kHz session, phone greeting and one delegation; interruption and endurance remain unverified |
+| WhatsApp | WaCalls control/media, stored identity mapping and shared Live runtime | First outgoing phone conversation and backend answer heard; unexpected audio termination remains unresolved |
+| Text backend | Optional GPT-5.6 Sol forwarding with durable receipts and callbacks | Offline recovery tests and one real phone delegation completed and heard |
 | Packaging | Source install and local Docker/Compose definitions | Linux CI and a paused ARM64 server deployment pass; account restore and real calling remain unverified |
 
 See [acceptance evidence and remaining gates](docs/acceptance.md).

@@ -5,11 +5,11 @@ Evidence updated: 2026-09-17. This repository is a source alpha, not an accepted
 | Area | Evidence available | Still required |
 | --- | --- | --- |
 | Control/state | Automated tests for durable admission, idempotency, state transitions, recovery and retention | Deployed process failure/recovery exercises with real platform state |
-| Backend | Contract, signed-event and receipt tests; SQLite simulation and optional OpenAI forwarding with durable callbacks, deduplication and interruption recovery; direct Sol connectivity | Live-to-backend phone delegation and actual business execution |
-| Live | Injected primary-WebSocket tests plus a real 16 kHz start/close with returned final usage | Observed phone greeting, interruption, duplex voice and delegation |
+| Backend | Contract tests, durable simulation/OpenAI callbacks, deduplication and recovery; one real Sol phone request completed, callback accepted and answer heard | Further failure/recovery checks; actual business execution remains outside the text backend |
+| Live | Primary-WebSocket tests, real 16 kHz session/final usage, phone opening and one completed delegation | Interruption, sustained duplex voice and clean phone termination |
 | Audio | Actual paced synthetic 48↔24 kHz conversion on FFmpeg 6.0/macOS arm64, 6.1.1/Linux and 5.1.9/Debian container; exact sample counts, waveform order and bounded queue | Handset latency, drift, clipping and long-run audio quality |
 | Telegram | Account-free NTgCalls load/create/external-input/cleanup on macOS arm64 and Linux x64/arm64 Node 24; signaling fixtures | Login and target verification, genuine outgoing/incoming calls, handset events and duplex voice |
-| WhatsApp | Pinned Go server/core tests, race checks, loopback PCM and host/Linux amd64 builds; shared coordinator and identity/termination fixtures; deployed account paired/open | Deployed media operation, real calls and stored identity resolution |
+| WhatsApp | Pinned Go tests/builds, loopback PCM, paired account and first outbound media/Live/backend conversation | Unexpected audio termination, incoming-call identity resolution and broader phone acceptance |
 | Packaging | Both Docker images built in Linux CI and on an ARM64 server; bridge CLI, native/FFmpeg checks, a paused systemd/Compose deployment and public HTTPS health/authentication pass; private WaCalls starts with an empty account store | Restore and upgrade with provisioned accounts |
 | Audit | JSON/HTML allowlisted summaries omit private text, identities, references and unknown fields; private full exports remain available | Operator review before sharing; timestamps and usage remain visible in summaries |
 | Operational endurance | Bounded cleanup/queue behavior covered locally | 24-hour idle/active endurance, resource use and independent platform disconnection tests |
@@ -34,6 +34,12 @@ After the operator opened the private network route, public HTTPS checks through
 Using operator-managed credentials on the ARM64 deployment, model reads for `gpt-live-1` and `gpt-5.6-sol` returned HTTP 200. A small Responses request to Sol completed with the expected reply (10 input / 5 output tokens). The deployed `LiveClient` started a real 16 kHz session, reached ready, received 19,200 output audio bytes and closed with complete finalization and one second of reported usage. The synthetic input and output were not saved or played to a phone. These results establish connectivity and the short session lifecycle, not a phone conversation, audio quality or actual delegation.
 
 WaCalls subsequently reported one paired/open account and an empty active-call snapshot. Pairing had previously shown an iPhone connection error; the specific cause of the later successful pairing was not established, and no dependency upgrade was applied. Private identities and account material are excluded from this record.
+
+## First WhatsApp conversation, 2026-09-17
+
+Candidate `08c55e2` was built on the ARM64 server and used for both the bridge and the OpenAI backend; the WaCalls image stayed at `6d9da44`. A single authorized outgoing call reached connected, media-ready and Live-ready. One partial-transcript delegation received accepted and completed results; its callback was accepted, and queued model input was cleared. The operator confirmed hearing the Chinese opening and backend answer. No raw audio was saved.
+
+The call ended unexpectedly about 50 seconds after connection, before its 120-second limit. The bridge recorded `audio_failed`; WaCalls acknowledged the local termination request. The operator reported no intentional hangup. Live finalized with 44 seconds of reported usage. This is partial acceptance, not a clean-call pass: the frontend/backend path worked, but the audio failure needs correction and a subsequent handset test. Initial inspection found timer-deadline drift as a candidate cause; the failing buffer or operation was not identified by the original generic error.
 
 ## Real-call acceptance record
 
