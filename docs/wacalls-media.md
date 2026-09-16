@@ -1,6 +1,6 @@
 # WaCalls server-side PCM adapter
 
-This patch adds an authenticated binary WebSocket media adapter to [JotaDev66/WaCalls](https://github.com/JotaDev66/WaCalls) at commit `edeb31f0427aba896639db503153b777a405eccf`. It replaces the need for a browser media leg when used by VoxDock. It does not modify WhatsApp signaling, encryption, MLow, or RTP implementation. The upstream browser bridge already converts mono 16 kHz PCM16 little-endian to/from the call manager's float32 callbacks; this adapter reuses the same converters. It does not relabel or resample audio.
+This patch adds an authenticated binary WebSocket media adapter to [JotaDev66/WaCalls](https://github.com/JotaDev66/WaCalls) at commit `edeb31f0427aba896639db503153b777a405eccf`. It replaces the need for a browser media leg when used by VoxDock. It preserves WhatsApp packet construction, encryption, MLow and RTP algorithms. The patch also corrects termination acknowledgment handling as described below. The upstream browser bridge already converts mono 16 kHz PCM16 little-endian to/from the call manager's float32 callbacks; this adapter reuses the same converters. It does not relabel or resample audio.
 
 ## Build
 
@@ -32,3 +32,13 @@ Local tests verify secret authorization, grant expiry/binding/replay/capacity, c
 The patch preserves upstream MIT attribution in `patches/wacalls/UPSTREAM-LICENSE` and includes that license alongside built binaries. Review upstream dependencies and applicable licenses before distributing a complete image.
 
 On 2026-09-16, the clean-checkout build script completed with Go 1.26.4 on macOS arm64: `go test ./cmd/server` passed and both host and `CGO_ENABLED=0 GOOS=linux GOARCH=amd64` builds succeeded. `go test -race ./cmd/server -run '^TestMedia' -count=1` passed for the added media cases. Linux execution and real-account calls were not performed. The tests additionally verify output-queue overflow closes the socket and releases queued PCM.
+
+## Termination evidence correction
+
+The pinned upstream `EndCall` marks the call ended before launching a background terminate query, discards its result and lets the HTTP request context expire when its handler returns. The handler then removes the call and broadcasts `call-ended` regardless of the query result. Separately, the upstream socket query returns `(nil, nil)` on timeout. Together these paths can advertise success without evidence that a termination request was accepted. This defect was established by source inspection and reproduced with controlled socket tests, not a real WhatsApp account.
+
+The patch stops local media and waits for a bounded, correlated `ack` with `class=call`, matching stanza ID and no error indication. A nil response, query error, cancellation or mismatched acknowledgment produces an unconfirmed result. The call remains reserved and later accept/transport/ack updates cannot restart its media. Repeated end requests do not resend a query after acknowledged or unconfirmed termination. A correlated remote termination event can resolve the retained call.
+
+Successful `DELETE /api/sessions/{sid}/calls/{id}` now returns HTTP 200 with `{ "status": "ended", "termination": "acknowledged" }`, or `"remote"` if a peer event resolved it. `acknowledged` means the signaling request was acknowledged and local media was closed; **it does not prove the handset observed closure**. An unconfirmed outcome returns HTTP 502 `{ "error": "hangup_unconfirmed" }`; a missing active call returns 404 rather than inventing confirmation. The additive `termination` field on `call-ended` SSE/history distinguishes `acknowledged`, `remote`, and `unconfirmed`. Local rejection follows the upstream asynchronous path and is explicitly unconfirmed; it is not relabeled as a remote hangup.
+
+The core tests cover waiting before signaling completion, valid acknowledgments, nil timeout responses, transport errors, wrong IDs, error acknowledgments, cancellation, idempotent repeat-end and a concurrent peer termination. An HTTP regression verifies unconfirmed state is not force-removed. Run `go test ./cmd/server ./internal/voip/call`; focused tests also passed with `-race`. Actual service acknowledgment shapes and handset termination still require real-call acceptance.

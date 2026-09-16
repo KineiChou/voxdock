@@ -1,3 +1,75 @@
+diff --git a/cmd/server/broker.go b/cmd/server/broker.go
+index 950b250..473399b 100644
+--- a/cmd/server/broker.go
++++ b/cmd/server/broker.go
+@@ -17,15 +17,16 @@ const (
+ )
+ 
+ type CallRecord struct {
+-	SessionID string     `json:"sessionId"`
+-	CallID    string     `json:"callId"`
+-	Owner     *string    `json:"owner"`
+-	Direction string     `json:"direction"`
+-	Peer      string     `json:"peer"`
+-	StartedAt int64      `json:"startedAt"`
+-	Status    CallStatus `json:"status"`
+-	EndedAt   *int64     `json:"endedAt,omitempty"`
+-	EndReason string     `json:"endReason,omitempty"`
++	SessionID   string     `json:"sessionId"`
++	CallID      string     `json:"callId"`
++	Owner       *string    `json:"owner"`
++	Direction   string     `json:"direction"`
++	Peer        string     `json:"peer"`
++	StartedAt   int64      `json:"startedAt"`
++	Status      CallStatus `json:"status"`
++	EndedAt     *int64     `json:"endedAt,omitempty"`
++	Termination string     `json:"termination,omitempty"`
++	EndReason   string     `json:"endReason,omitempty"`
+ }
+ 
+ type AuthSnapshot struct {
+@@ -159,7 +160,7 @@ func (b *Broker) ownerActiveCall(owner string) string {
+ 	return ""
+ }
+ 
+-func (b *Broker) endCall(id, reason string) {
++func (b *Broker) endCall(id, reason, termination string) {
+ 	b.mu.Lock()
+ 	c, ok := b.calls[id]
+ 	if !ok {
+@@ -170,6 +171,10 @@ func (b *Broker) endCall(id, reason string) {
+ 	c.Status = StatusEnded
+ 	c.EndedAt = &now
+ 	c.EndReason = reason
++	if termination == "" {
++		termination = "unconfirmed"
++	}
++	c.Termination = termination
+ 	ended := *c
+ 	delete(b.calls, id)
+ 	b.history = append(b.history, ended)
+@@ -178,7 +183,7 @@ func (b *Broker) endCall(id, reason string) {
+ 	b.mu.Unlock()
+ 
+ 	b.broadcast(map[string]any{
+-		"type": "call-ended", "sessionId": sessionID, "id": id, "owner": owner, "reason": reason, "endedAt": now,
++		"type": "call-ended", "sessionId": sessionID, "id": id, "owner": owner, "reason": reason, "endedAt": now, "termination": termination,
+ 	})
+ 	b.broadcastCallList()
+ }
+diff --git a/cmd/server/broker_test.go b/cmd/server/broker_test.go
+index 23b2e8a..b0f7e6e 100644
+--- a/cmd/server/broker_test.go
++++ b/cmd/server/broker_test.go
+@@ -19,7 +19,7 @@ func TestOwnerActiveCall(t *testing.T) {
+ 		t.Fatalf("empty owner must return empty, got %q", got)
+ 	}
+ 
+-	b.endCall("c1", "done")
++	b.endCall("c1", "done", "remote")
+ 	if got := b.ownerActiveCall("op-A"); got != "" {
+ 		t.Fatalf("op-A's call ended, expected empty, got %q", got)
+ 	}
 diff --git a/cmd/server/callregistry.go b/cmd/server/callregistry.go
 index d8be9bd..e3f2348 100644
 --- a/cmd/server/callregistry.go
@@ -50,7 +122,7 @@ index d8be9bd..e3f2348 100644
 +	}
 +}
 diff --git a/cmd/server/httpapi.go b/cmd/server/httpapi.go
-index 880ab22..13b7ae5 100644
+index 880ab22..3b7d7c7 100644
 --- a/cmd/server/httpapi.go
 +++ b/cmd/server/httpapi.go
 @@ -14,6 +14,10 @@ import (
@@ -80,6 +152,40 @@ index 880ab22..13b7ae5 100644
  	writeJSON(w, http.StatusOK, map[string]string{"sdp_answer": answer})
  }
  
+@@ -254,18 +262,27 @@ func (s *server) doReject(sess *Session, w http.ResponseWriter, r *http.Request)
+ 		_ = ac.cm.RejectCall(r.Context(), id, core.EndCallReasonDeclined)
+ 	}
+ 	sess.removeCall(id)
+-	s.broker.endCall(id, string(core.EndCallReasonDeclined))
++	s.broker.endCall(id, string(core.EndCallReasonDeclined), "unconfirmed")
+ 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+ }
+ 
+ func (s *server) doEndCall(sess *Session, w http.ResponseWriter, r *http.Request) {
+ 	id := r.PathValue("id")
+-	if ac, ok := sess.reg.get(id); ok {
+-		_ = ac.cm.EndCall(r.Context(), core.EndCallReasonUserEnded)
++	ac, ok := sess.reg.get(id)
++	if !ok {
++		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such active call"})
++		return
+ 	}
+-	sess.removeCall(id)
+-	s.broker.endCall(id, string(core.EndCallReasonUserEnded))
+-	w.WriteHeader(http.StatusNoContent)
++	if err := ac.cm.EndCall(r.Context(), core.EndCallReasonUserEnded); err != nil {
++		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "hangup_unconfirmed"})
++		return
++	}
++	evidence := ac.cm.TerminationEvidence()
++	if evidence != "acknowledged" && evidence != "remote" {
++		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "hangup_unconfirmed"})
++		return
++	}
++	writeJSON(w, http.StatusOK, map[string]string{"status": "ended", "termination": evidence})
+ }
+ 
+ func normalizePhone(p string) string {
 diff --git a/cmd/server/media.go b/cmd/server/media.go
 new file mode 100644
 index 0000000..0ccc32c
@@ -534,20 +640,32 @@ index f4bfce6..37a37cc 100644
 +	return &server{mediaAuth: auth, broker: broker, sessions: mgr, log: log, staticDir: staticDir}, nil
  }
 diff --git a/cmd/server/session.go b/cmd/server/session.go
-index 38092f3..b1df59a 100644
+index 38092f3..7159859 100644
 --- a/cmd/server/session.go
 +++ b/cmd/server/session.go
-@@ -87,13 +87,7 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
- 		s.removeCall(c.CallID)
- 		s.mgr.broker.endCall(c.CallID, string(c.StateData.EndReason))
+@@ -65,7 +65,7 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
+ 	cm.OnStateChange = func(c *call.CallInfo) {
+ 		if c.IsEnded() {
+ 			s.removeCall(c.CallID)
+-			s.mgr.broker.endCall(c.CallID, string(c.StateData.EndReason))
++			s.mgr.broker.endCall(c.CallID, string(c.StateData.EndReason), c.Termination)
+ 			return
+ 		}
+ 		dir := "outbound"
+@@ -85,15 +85,9 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
  	}
+ 	cm.OnEnded = func(c *call.CallInfo) {
+ 		s.removeCall(c.CallID)
+-		s.mgr.broker.endCall(c.CallID, string(c.StateData.EndReason))
+-	}
 -	cm.OnPeerAudio = func(pcm16 []float32) {
 -		ac, ok := s.reg.get(callID)
 -		if !ok || ac.bridge == nil {
 -			return
 -		}
 -		_ = ac.bridge.WritePCM(pcm16)
--	}
++		s.mgr.broker.endCall(c.CallID, string(c.StateData.EndReason), c.Termination)
+ 	}
 +	cm.OnPeerAudio = func(pcm16 []float32) { s.reg.writePCM(callID, pcm16) }
  }
  
@@ -570,6 +688,44 @@ index 38092f3..b1df59a 100644
  func (s *Session) removeCall(callID string) {
  	ac, ok := s.reg.remove(callID)
  	if !ok {
+diff --git a/cmd/server/termination_test.go b/cmd/server/termination_test.go
+new file mode 100644
+index 0000000..9385fbb
+--- /dev/null
++++ b/cmd/server/termination_test.go
+@@ -0,0 +1,32 @@
++package main
++
++import (
++	"net/http/httptest"
++	"strings"
++	"testing"
++
++	"wacalls/internal/voip/call"
++)
++
++func TestEndHTTPNeverForcesUnconfirmedCallEnded(t *testing.T) {
++	sess := &Session{reg: newCallRegistry()}
++	// An active registry entry without terminal evidence must not produce an ended response.
++	sess.reg.add("c", &activeCall{cm: call.NewCallManager(nil, nil)})
++	s := &server{broker: NewBroker()}
++	request := httptest.NewRequest("DELETE", "/", nil)
++	request.SetPathValue("id", "c")
++	out := httptest.NewRecorder()
++	s.doEndCall(sess, out, request)
++	if out.Code != 502 || !strings.Contains(out.Body.String(), "hangup_unconfirmed") {
++		t.Fatalf("dishonest response: %d", out.Code)
++	}
++	if _, ok := sess.reg.get("c"); !ok {
++		t.Fatal("unconfirmed reservation removed")
++	}
++	request.SetPathValue("id", "missing")
++	out = httptest.NewRecorder()
++	s.doEndCall(sess, out, request)
++	if out.Code != 404 {
++		t.Fatal("missing call invented terminal confirmation")
++	}
++}
 diff --git a/go.mod b/go.mod
 index f308a99..e0f8b7f 100644
 --- a/go.mod
@@ -590,3 +746,314 @@ index f308a99..e0f8b7f 100644
  	github.com/dustin/go-humanize v1.0.1 // indirect
  	github.com/elliotchance/orderedmap/v3 v3.1.0 // indirect
  	github.com/google/uuid v1.6.0 // indirect
+diff --git a/internal/voip/call/callmanager.go b/internal/voip/call/callmanager.go
+index 2e225ee..39b2485 100644
+--- a/internal/voip/call/callmanager.go
++++ b/internal/voip/call/callmanager.go
+@@ -19,6 +19,7 @@ type CallManager struct {
+ 	log  *slog.Logger
+ 
+ 	mu          sync.Mutex
++	endMu       sync.Mutex
+ 	currentCall *CallInfo
+ 
+ 	rtpSession  *media.RtpSession
+@@ -205,26 +206,65 @@ func (m *CallManager) RejectCall(ctx context.Context, callID string, reason core
+ }
+ 
+ func (m *CallManager) EndCall(ctx context.Context, reason core.EndCallReason) error {
++	m.endMu.Lock()
++	defer m.endMu.Unlock()
+ 	m.mu.Lock()
+ 	call := m.currentCall
+ 	if call == nil || call.IsEnded() {
+ 		m.mu.Unlock()
+ 		return nil
+ 	}
+-	_ = call.ApplyTransition(Transition{Type: TransitionTerminated, Reason: reason})
++	if call.Termination == "unconfirmed" {
++		m.mu.Unlock()
++		return &CallError{"termination remains unconfirmed"}
++	}
++	call.Termination = "unconfirmed"
+ 	node := signaling.BuildTerminateStanza(wanode.MustJID(call.PeerJid), call.CallID, wanode.MustJID(call.CallCreator))
+-	ended := call
++	m.mu.Unlock()
++	// Stop local media before advertising completion; retain the call on unknown outcome.
++	m.cleanupMedia()
++	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
++	defer cancel()
++	ack, err := m.sock.Query(queryCtx, node)
++	m.mu.Lock()
++	if call.IsEnded() {
++		m.mu.Unlock()
++		return nil
++	} // A peer termination may race the query.
++	valid := err == nil && ack != nil && ack.Tag == "ack" && wanode.AttrString(ack.Attrs, "id") == wanode.AttrString(node.Attrs, "id") && wanode.AttrString(ack.Attrs, "class") == "call"
++	if valid {
++		if _, failed := ack.Attrs["error"]; failed {
++			valid = false
++		}
++		for _, child := range ack.GetChildren() {
++			if child.Tag == "error" {
++				valid = false
++			}
++		}
++	}
++	if !valid {
++		m.mu.Unlock()
++		return &CallError{"termination acknowledgment unavailable"}
++	}
++	call.Termination = "acknowledged"
++	_ = call.ApplyTransition(Transition{Type: TransitionTerminated, Reason: reason})
+ 	m.emitState()
+ 	m.mu.Unlock()
+-
+-	go func() { _, _ = m.sock.Query(ctx, node) }()
+ 	if m.OnEnded != nil {
+-		m.OnEnded(ended)
++		m.OnEnded(call)
+ 	}
+-	m.cleanupMedia()
+ 	return nil
+ }
+ 
++func (m *CallManager) TerminationEvidence() string {
++	m.mu.Lock()
++	defer m.mu.Unlock()
++	if m.currentCall == nil {
++		return "unconfirmed"
++	}
++	return m.currentCall.Termination
++}
++
+ func (m *CallManager) ownCredJid() string {
+ 	lid := m.sock.OwnLID()
+ 	if !lid.IsEmpty() {
+diff --git a/internal/voip/call/callmanager_relay.go b/internal/voip/call/callmanager_relay.go
+index 8e6cce9..b0dbcf8 100644
+--- a/internal/voip/call/callmanager_relay.go
++++ b/internal/voip/call/callmanager_relay.go
+@@ -23,7 +23,7 @@ var _ RelayTransport = (*transport.SctpRelayManager)(nil)
+ func (m *CallManager) onRelayConnected() {
+ 	m.mu.Lock()
+ 	call := m.currentCall
+-	if call != nil && call.StateData.State == core.CallStateConnecting {
++	if call != nil && call.Termination == "" && call.StateData.State == core.CallStateConnecting {
+ 		if err := call.ApplyTransition(Transition{Type: TransitionMediaConnected}); err == nil {
+ 			m.emitState()
+ 			m.startSilenceKeepaliveLocked()
+@@ -62,6 +62,14 @@ func buildRelayConfigs(endpoints []core.RelayEndpoint) []transport.RelayConfig {
+ }
+ 
+ func (m *CallManager) connectRelays(endpoints []core.RelayEndpoint) {
++	m.endMu.Lock()
++	defer m.endMu.Unlock()
++	m.mu.Lock()
++	stopping := m.currentCall == nil || m.currentCall.Termination != ""
++	m.mu.Unlock()
++	if stopping {
++		return
++	}
+ 	relays := buildRelayConfigs(endpoints)
+ 	if len(relays) == 0 {
+ 		m.log.Error("no usable relay configs")
+diff --git a/internal/voip/call/callmanager_signaling.go b/internal/voip/call/callmanager_signaling.go
+index 145c280..ad921be 100644
+--- a/internal/voip/call/callmanager_signaling.go
++++ b/internal/voip/call/callmanager_signaling.go
+@@ -98,7 +98,7 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
+ 	m.mu.Lock()
+ 	call := m.currentCall
+ 	m.mu.Unlock()
+-	if call == nil {
++	if call == nil || call.Termination != "" {
+ 		return
+ 	}
+ 	info := signaling.ExtractNodeInfo(node)
+@@ -176,7 +176,7 @@ func (m *CallManager) HandleCallTransport(ctx context.Context, node *waBinary.No
+ 	m.mu.Lock()
+ 	call := m.currentCall
+ 	m.mu.Unlock()
+-	if call == nil {
++	if call == nil || call.Termination != "" {
+ 		return
+ 	}
+ 	info := signaling.ExtractNodeInfo(node)
+@@ -213,7 +213,7 @@ func (m *CallManager) HandleCallAck(ctx context.Context, node *waBinary.Node) {
+ 
+ 	m.mu.Lock()
+ 	call := m.currentCall
+-	if call == nil {
++	if call == nil || call.Termination != "" {
+ 		m.mu.Unlock()
+ 		return
+ 	}
+@@ -261,11 +261,16 @@ func (m *CallManager) HandleCallAck(ctx context.Context, node *waBinary.Node) {
+ func (m *CallManager) HandleCallTerminate(node *waBinary.Node) {
+ 	m.mu.Lock()
+ 	call := m.currentCall
+-	if call == nil {
++	if call == nil || call.IsEnded() {
+ 		m.mu.Unlock()
+ 		return
+ 	}
+ 	info := signaling.ExtractNodeInfo(node)
++	if info == nil || info.CallID != call.CallID {
++		m.mu.Unlock()
++		return
++	}
++	call.Termination = "remote"
+ 	reason := core.EndCallReasonUserEnded
+ 	if info != nil {
+ 		if r := wanode.AttrString(info.InnerNode.Attrs, "reason"); r != "" {
+diff --git a/internal/voip/call/callstate.go b/internal/voip/call/callstate.go
+index 03c0a96..d7d855d 100644
+--- a/internal/voip/call/callstate.go
++++ b/internal/voip/call/callstate.go
+@@ -19,6 +19,8 @@ type CallStateData struct {
+ }
+ 
+ type CallInfo struct {
++	// Termination identifies evidence, not whether the handset observed closure.
++	Termination     string
+ 	CallID          string
+ 	PeerJid         string
+ 	CallCreator     string
+diff --git a/internal/voip/call/termination_test.go b/internal/voip/call/termination_test.go
+new file mode 100644
+index 0000000..b41fdeb
+--- /dev/null
++++ b/internal/voip/call/termination_test.go
+@@ -0,0 +1,131 @@
++package call
++
++import (
++	"context"
++	"errors"
++	"testing"
++	"time"
++
++	waBinary "go.mau.fi/whatsmeow/binary"
++	"go.mau.fi/whatsmeow/types"
++	"wacalls/internal/voip/core"
++	"wacalls/internal/voip/signaling"
++)
++
++type terminationSocket struct {
++	core.VoipSocket
++	query func(context.Context, waBinary.Node) (*waBinary.Node, error)
++}
++
++func (s *terminationSocket) Query(ctx context.Context, n waBinary.Node) (*waBinary.Node, error) {
++	return s.query(ctx, n)
++}
++func terminationManager(query func(context.Context, waBinary.Node) (*waBinary.Node, error)) *CallManager {
++	m := NewCallManager(&terminationSocket{query: query}, nil)
++	m.currentCall = NewOutgoingCall("call-1", "2@s.whatsapp.net", "1@s.whatsapp.net", core.CallMediaTypeAudio)
++	return m
++}
++func ackFor(n waBinary.Node) *waBinary.Node {
++	return &waBinary.Node{Tag: "ack", Attrs: waBinary.Attrs{"id": n.Attrs["id"], "class": "call"}}
++}
++
++func TestEndCallRequiresAcknowledgmentBeforeEnded(t *testing.T) {
++	started := make(chan struct{})
++	release := make(chan struct{})
++	queries := 0
++	m := terminationManager(func(ctx context.Context, n waBinary.Node) (*waBinary.Node, error) {
++		queries++
++		if _, ok := ctx.Deadline(); !ok {
++			t.Error("missing bounded query context")
++		}
++		close(started)
++		<-release
++		return ackFor(n), nil
++	})
++	ended := 0
++	m.OnEnded = func(*CallInfo) { ended++ }
++	done := make(chan error, 1)
++	go func() { done <- m.EndCall(context.Background(), core.EndCallReasonUserEnded) }()
++	<-started
++	if m.CurrentCall().IsEnded() {
++		t.Fatal("ended advertised before acknowledgment")
++	}
++	close(release)
++	if err := <-done; err != nil {
++		t.Fatal(err)
++	}
++	if !m.CurrentCall().IsEnded() || m.TerminationEvidence() != "acknowledged" || ended != 1 {
++		t.Fatal("missing acknowledged completion")
++	}
++	if err := m.EndCall(context.Background(), core.EndCallReasonUserEnded); err != nil {
++		t.Fatal(err)
++	}
++	if queries != 1 || ended != 1 {
++		t.Fatal("repeat end sent another query or event")
++	}
++}
++
++func TestEndCallUnknownOutcomesRetainCall(t *testing.T) {
++	cases := map[string]func(context.Context, waBinary.Node) (*waBinary.Node, error){
++		"nil-timeout": func(context.Context, waBinary.Node) (*waBinary.Node, error) { return nil, nil },
++		"transport-error": func(context.Context, waBinary.Node) (*waBinary.Node, error) {
++			return nil, errors.New("private transport detail")
++		},
++		"wrong-id": func(context.Context, waBinary.Node) (*waBinary.Node, error) {
++			return &waBinary.Node{Tag: "ack", Attrs: waBinary.Attrs{"class": "call", "id": "other"}}, nil
++		},
++		"error-ack": func(_ context.Context, n waBinary.Node) (*waBinary.Node, error) {
++			a := ackFor(n)
++			a.Attrs["error"] = "500"
++			return a, nil
++		},
++		"cancelled": func(ctx context.Context, _ waBinary.Node) (*waBinary.Node, error) {
++			<-ctx.Done()
++			return nil, ctx.Err()
++		},
++	}
++	for name, query := range cases {
++		t.Run(name, func(t *testing.T) {
++			count := 0
++			m := terminationManager(func(ctx context.Context, n waBinary.Node) (*waBinary.Node, error) { count++; return query(ctx, n) })
++			emitted := false
++			m.OnEnded = func(*CallInfo) { emitted = true }
++			ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
++			defer cancel()
++			if err := m.EndCall(ctx, core.EndCallReasonUserEnded); err == nil {
++				t.Fatal("unknown outcome reported success")
++			}
++			if m.CurrentCall().IsEnded() || emitted || m.TerminationEvidence() != "unconfirmed" {
++				t.Fatal("unknown outcome freed call")
++			}
++			if err := m.EndCall(context.Background(), core.EndCallReasonUserEnded); err == nil || count != 1 {
++				t.Fatal("unknown outcome retried blindly")
++			}
++		})
++	}
++}
++
++func TestPeerTerminationWhileEndQueryPending(t *testing.T) {
++	var m *CallManager
++	m = terminationManager(func(context.Context, waBinary.Node) (*waBinary.Node, error) {
++		n := signaling.BuildTerminateStanza(types.NewJID("1", types.DefaultUserServer), "call-1", types.NewJID("1", types.DefaultUserServer))
++		m.HandleCallTerminate(&n)
++		return nil, nil
++	})
++	if err := m.EndCall(context.Background(), core.EndCallReasonUserEnded); err != nil {
++		t.Fatal(err)
++	}
++	if !m.CurrentCall().IsEnded() || m.TerminationEvidence() != "remote" {
++		t.Fatal("peer evidence lost")
++	}
++}
++
++func TestUnconfirmedTerminationIgnoresLateRelayConnected(t *testing.T) {
++	m := terminationManager(func(context.Context, waBinary.Node) (*waBinary.Node, error) { return nil, nil })
++	m.currentCall.StateData.State = core.CallStateConnecting
++	_ = m.EndCall(context.Background(), core.EndCallReasonUserEnded)
++	m.onRelayConnected()
++	if m.CurrentCall().StateData.State != core.CallStateConnecting || m.keepaliveStop != nil {
++		t.Fatal("late relay restarted terminated media")
++	}
++}
