@@ -1,0 +1,12 @@
+{
+  "name": "@voxdock/telegram",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "big-integer": "1.6.52",
+    "ntgcalls": "3.0.0-rc03",
+    "teleproto": "1.229.0"
+  }
+}
