@@ -22,6 +22,12 @@ export function doctor(
   ];
   try {
     controlToken(config, directory);
+    if (
+      (statSync(resolve(directory, config.security.control_token_file!)).mode &
+        0o077) !==
+      0
+    )
+      throw new Error();
     checks.push({ name: "control_token", status: "pass" });
   } catch {
     checks.push({ name: "control_token", status: "fail" });

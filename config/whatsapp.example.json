@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "service": { "listen": "127.0.0.1:8787", "data_dir": "./data" },
+  "security": { "control_token_file": "./control.token" },
+  "calling": { "enabled": false },
+  "channels": {
+    "telegram": { "enabled": false },
+    "whatsapp": {
+      "enabled": true,
+      "account_ref": "replace-with-paired-session-id",
+      "endpoint": "http://127.0.0.1:8080",
+      "media_token_file": "./secrets/wacalls-media"
+    }
+  },
+  "targets": [{
+    "id": "owner-whatsapp", "channel": "whatsapp",
+    "account_ref": "replace-with-paired-session-id",
+    "peer_id_env": "WHATSAPP_TARGET_PHONE", "principal_ref": "owner", "enabled": true
+  }],
+  "live": { "api_key_file": "./secrets/openai-api-key", "language": "en" },
+  "backend": {
+    "id": "agent", "base_url": "http://127.0.0.1:8090",
+    "request_token_file": "./secrets/backend-request-token",
+    "event_signing_key_file": "./secrets/backend-event-signing-key"
+  }
+}

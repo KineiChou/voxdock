@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "service": { "listen": "127.0.0.1:8787", "data_dir": "data" },
+  "security": { "control_token_file": "control.token" },
+  "calling": { "enabled": false, "max_call_seconds": 600, "daily_live_seconds": 1200, "redial_attempts": 0 },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "account_ref": "telegram-bridge",
+      "api_id_env": "TELEGRAM_API_ID",
+      "api_hash_file": "secrets/telegram-api-hash",
+      "session_file": "secrets/telegram.session"
+    },
+    "whatsapp": { "enabled": false }
+  },
+  "targets": [{ "id": "owner-telegram", "channel": "telegram", "account_ref": "telegram-bridge", "peer_id_env": "TELEGRAM_TARGET_ID", "principal_ref": "owner", "enabled": true }],
+  "live": { "model": "gpt-live-1", "api_key_file": "secrets/openai-key", "voice": "marin", "delegation": "client", "store": false },
+  "backend": { "id": "my-backend", "base_url": "http://127.0.0.1:8090", "request_token_file": "secrets/backend-request-token", "event_signing_key_file": "secrets/backend-event-key" }
+}
