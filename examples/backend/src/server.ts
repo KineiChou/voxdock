@@ -11,6 +11,7 @@ import {
 import { tokenMatches, verifyEvent } from "@voxdock/backend";
 import { ExampleConflict, ExampleStore } from "./store.js";
 import { CallbackWorker, type CallbackOptions } from "./callbacks.js";
+import { OpenAIWorker, modelInput, type OpenAIOptions } from "./openai.js";
 const contextRequest = Type.Object(
   {
     call_id: Type.String({ minLength: 1, maxLength: 200 }),
@@ -29,6 +30,8 @@ export interface ExampleBackendOptions {
   eventSigningKey: string;
   now?: () => Date;
   callbacks?: CallbackOptions;
+  openai?: OpenAIOptions;
+  language?: string;
 }
 export function createExampleBackend(options: ExampleBackendOptions) {
   if (!options.requestToken || !options.eventSigningKey)
@@ -37,7 +40,9 @@ export function createExampleBackend(options: ExampleBackendOptions) {
   const now = options.now ?? (() => new Date());
   const store = new ExampleStore(options.databasePath, now);
   let callbacks: CallbackWorker | undefined;
+  let model: OpenAIWorker | undefined;
   try {
+    model = options.openai ? new OpenAIWorker(store, options.openai) : undefined;
     callbacks = options.callbacks
       ? new CallbackWorker(store, options.callbacks)
       : undefined;
@@ -80,6 +85,7 @@ export function createExampleBackend(options: ExampleBackendOptions) {
       }),
   );
   app.addHook("onClose", async () => {
+    await model?.close();
     await callbacks?.close();
     store.close();
   });
@@ -103,11 +109,11 @@ export function createExampleBackend(options: ExampleBackendOptions) {
     const context: BackendContext = {
       context_revision: 1,
       obsolete,
-      purpose: "Demonstrate an independent simulated backend.",
+      purpose: model ? "Answer requests through a text-only model." : "Demonstrate an independent simulated backend.",
       facts: [
-        `The example backend has ${store.jobs().length} durable simulated jobs. No real business action is performed.`,
+        model ? "The backend provides text answers only. It cannot execute code, use tools, access files, or perform external actions. Match the caller’s language." : `The example backend has ${store.jobs().length} durable simulated jobs. No real business action is performed.`,
       ],
-      language: "en",
+      language: options.language ?? "en",
     };
     return { call_id: body.call_id, context_ref: body.context_ref, context };
   });
@@ -115,7 +121,11 @@ export function createExampleBackend(options: ExampleBackendOptions) {
     const body = parse(request.body);
     if (!Value.Check(DelegationSchema, body))
       return reply.code(400).send({ error: "invalid_delegation" });
-    return store.delegate(body as Delegation);
+    const input = model ? modelInput(body) : undefined;
+    if (model && input === undefined)
+      return reply.code(400).send({ error: "invalid_model_input" });
+    const receipt = store.delegate(body as Delegation, input);
+    return receipt;
   });
   app.post("/voice/v1/events", async (request, reply) => {
     const timestamp = request.headers["x-voxdock-timestamp"];
@@ -145,6 +155,9 @@ export function createExampleBackend(options: ExampleBackendOptions) {
       return reply.code(400).send({ error: "invalid_event" });
     store.event(body as CallEvent);
     return { accepted: true, event_id: body.event_id };
+  });
+  app.addHook("onRequest", async (request, reply) => {
+    if (model && request.url.startsWith("/simulation/")) return reply.code(404).send({ error: "not_found" });
   });
   app.get("/simulation/jobs", async () => ({
     simulation: true,
@@ -179,6 +192,7 @@ export function createExampleBackend(options: ExampleBackendOptions) {
     ...((await callbacks?.runOnce()) ?? { accepted: 0, failed: 0 }),
   }));
   return Object.assign(app, {
+    runModelWork: () => model?.runOnce() ?? Promise.resolve(),
     deliverCallbacks: () =>
       callbacks?.runOnce() ?? Promise.resolve({ accepted: 0, failed: 0 }),
   });

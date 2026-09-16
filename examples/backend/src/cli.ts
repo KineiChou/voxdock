@@ -17,7 +17,11 @@ const bridgeBaseUrl = bridgeBaseUrlFile
 const controlTokenFile = process.env.VOXDOCK_CONTROL_TOKEN_FILE;
 if (bridgeBaseUrl && !controlTokenFile)
   throw new Error("Missing callback control-token file configuration");
+const mode = process.env.EXAMPLE_BACKEND_MODE ?? "simulation";
+if (!["simulation", "openai"].includes(mode)) throw new Error("Invalid example backend mode");
 const app = createExampleBackend({
+  language: process.env.EXAMPLE_BACKEND_LANGUAGE ?? "en",
+  ...(mode === "openai" ? { openai: { apiKey: secret("OPENAI_API_KEY"), model: process.env.OPENAI_MODEL ?? "gpt-5.6-sol" } } : {}),
   databasePath:
     process.env.EXAMPLE_BACKEND_DATABASE ?? "./example-backend.sqlite",
   requestToken: secret("BACKEND_REQUEST_TOKEN"),
@@ -31,15 +35,18 @@ const app = createExampleBackend({
       }
     : {}),
 });
-await app.listen({ host: "127.0.0.1", port });
+await app.listen({ host: process.env.EXAMPLE_BACKEND_HOST ?? "127.0.0.1", port });
 const timer = bridgeBaseUrl
   ? setInterval(() => {
       void app.deliverCallbacks().catch(() => {});
     }, 1000)
   : undefined;
 if (bridgeBaseUrl) void app.deliverCallbacks().catch(() => {});
+const modelTimer = mode === "openai" ? setInterval(() => { void app.runModelWork().catch(() => {}); }, 250) : undefined;
+if (mode === "openai") void app.runModelWork().catch(() => {});
 for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.once(signal, () => {
     clearInterval(timer);
+    clearInterval(modelTimer);
     void app.close();
   });
