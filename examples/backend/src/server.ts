@@ -10,6 +10,7 @@ import {
 } from "@voxdock/contracts";
 import { tokenMatches, verifyEvent } from "@voxdock/backend";
 import { ExampleConflict, ExampleStore } from "./store.js";
+import { CallbackWorker, type CallbackOptions } from "./callbacks.js";
 const contextRequest = Type.Object(
   {
     call_id: Type.String({ minLength: 1, maxLength: 200 }),
@@ -27,13 +28,23 @@ export interface ExampleBackendOptions {
   requestToken: string;
   eventSigningKey: string;
   now?: () => Date;
+  callbacks?: CallbackOptions;
 }
 export function createExampleBackend(options: ExampleBackendOptions) {
   if (!options.requestToken || !options.eventSigningKey)
     throw new Error("Example authentication required");
   const app = Fastify({ logger: false, bodyLimit: 65536 });
-  const store = new ExampleStore(options.databasePath);
   const now = options.now ?? (() => new Date());
+  const store = new ExampleStore(options.databasePath, now);
+  let callbacks: CallbackWorker | undefined;
+  try {
+    callbacks = options.callbacks
+      ? new CallbackWorker(store, options.callbacks)
+      : undefined;
+  } catch (error) {
+    store.close();
+    throw error;
+  }
   // Keep bytes untouched until signature verification. Reject invalid UTF-8 before JSON decoding.
   app.removeContentTypeParser("application/json");
   app.addContentTypeParser(
@@ -68,7 +79,10 @@ export function createExampleBackend(options: ExampleBackendOptions) {
         error: error instanceof ExampleConflict ? "conflict" : "internal_error",
       }),
   );
-  app.addHook("onClose", async () => store.close());
+  app.addHook("onClose", async () => {
+    await callbacks?.close();
+    store.close();
+  });
   function parse(body: unknown): unknown {
     if (
       !Buffer.isBuffer(body) ||
@@ -136,5 +150,36 @@ export function createExampleBackend(options: ExampleBackendOptions) {
     simulation: true,
     jobs: store.jobs(),
   }));
-  return app;
+  app.post<{ Params: { job_id: string } }>(
+    "/simulation/jobs/:job_id/complete",
+    async (request, reply) => {
+      const body = parse(request.body);
+      if (
+        !Value.Check(
+          Type.Object(
+            { context_revision: Type.Integer({ minimum: 1 }) },
+            { additionalProperties: false },
+          ),
+          body,
+        )
+      )
+        return reply.code(400).send({ error: "invalid_completion" });
+      return {
+        simulation: true,
+        ...store.complete(request.params.job_id, body.context_revision),
+      };
+    },
+  );
+  app.get("/simulation/callbacks", async () => ({
+    simulation: true,
+    callbacks: store.callbacks(),
+  }));
+  app.post("/simulation/callbacks/deliver", async () => ({
+    simulation: true,
+    ...((await callbacks?.runOnce()) ?? { accepted: 0, failed: 0 }),
+  }));
+  return Object.assign(app, {
+    deliverCallbacks: () =>
+      callbacks?.runOnce() ?? Promise.resolve({ accepted: 0, failed: 0 }),
+  });
 }
