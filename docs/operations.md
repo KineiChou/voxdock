@@ -43,3 +43,7 @@ Stop the service before local mutation commands. Verify the external platform ha
 `pnpm voxdock audit export --call CALL_ID --format json --out ./record.json --config FILE` reads an authorized record from the running service. Use `--format html` for a local readable export. Output files must be new and use mode `0600`. HTML escapes transcript and result text and contains no executable scripts. Exports can contain private conversation content; they are not automatically published or automatically removed with the source records.
 
 `pnpm voxdock cleanup --config FILE` applies configured retention to the local store while the service is stopped. Transcript expiry includes copies in delegation fragments. Result summaries expire for terminal records. Minimal call and command identities remain to prevent replay; uncertain calls retain the state needed for reconciliation. Consistent SQLite backups and downstream recipients have separate retention requirements.
+
+## Local control-service smoke
+
+Run `node --import tsx scripts/smoke-control.mts` with Node 24 after installing the locked workspace dependencies. It creates a temporary private instance, runs the executable CLI, starts and restarts the actual disabled-channel runtime on a free loopback port, and checks authentication, exclusive process ownership, pause and clean shutdown. The script removes its temporary data, prints no token values, and passes no platform or Live credentials to child processes. It requires local socket binding permission and never calls a platform or paid API.
