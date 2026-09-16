@@ -18,5 +18,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+      - name: Run the real CLI with calling disabled
+        run: node --import tsx scripts/smoke-control.mts
       - name: Check native Telegram binding without an account
-        run: pnpm exec tsx packages/telegram/scripts/native-media-smoke.mts
+        run: node --import tsx packages/telegram/scripts/native-media-smoke.mts
+      - name: Check actual streaming audio conversion
+        run: |
+          command -v ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+          ffmpeg -version | head -n 1
+          node --import tsx packages/audio/scripts/streaming-smoke.ts

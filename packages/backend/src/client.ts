@@ -90,7 +90,7 @@ export class BackendClient {
       throw new BackendError("backend_delegation_mismatch");
     return response;
   }
-  async deliverEvent(event: CallEvent): Promise<void> {
+  async deliverEvent(event: CallEvent, signal?: AbortSignal): Promise<void> {
     const raw = JSON.stringify(event);
     const timestamp = String(Math.floor(this.now().getTime() / 1000));
     const response = await this.request(
@@ -105,6 +105,7 @@ export class BackendClient {
         ),
       },
       raw,
+      signal,
     );
     if (
       !response ||
@@ -121,6 +122,7 @@ export class BackendClient {
     payload: unknown,
     extraHeaders: Record<string, string> = {},
     raw = JSON.stringify(payload),
+    signal?: AbortSignal,
   ): Promise<unknown> {
     if (Buffer.byteLength(raw) > 65536)
       throw new BackendError("backend_request_too_large");
@@ -132,7 +134,7 @@ export class BackendClient {
       const response = await this.fetch(endpoint, {
         method: "POST",
         redirect: "error",
-        signal: controller.signal,
+        signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal,
         headers: {
           "content-type": "application/json",
           authorization: `Bearer ${this.options.requestToken}`,

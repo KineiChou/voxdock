@@ -19,7 +19,7 @@ export type LiveEvent =
   | { type: 'audio'; pcm: Buffer }
   | { type: 'transcript'; speaker: 'user' | 'assistant'; delta: string; startMs: number; endMs: number; eventId?: string }
   | { type: 'delegation'; id: string; target: string; offsetMs: number }
-  | { type: 'commentaryAccepted' | 'instructionsAccepted'; clientEventId: string }
+  | { type: 'commentaryAccepted' | 'instructionsAccepted' | 'thinkingAccepted'; clientEventId: string }
   | { type: 'usage'; seconds: number }
   | { type: 'fault'; code: string; clientEventId?: string }
   | { type: 'closed'; finalization: 'complete' | 'incomplete'; reason: string; seconds?: number };
@@ -73,7 +73,10 @@ export class LiveClient {
   instructions(content: string, delegationId: string | null = null): string {
     return this.append('instructions', content, delegationId);
   }
-  private append(kind: 'commentary' | 'instructions', content: string, delegationId: string | null): string {
+  thinking(content: string, delegationId: string | null = null): string {
+    return this.append('thinking', content, delegationId);
+  }
+  private append(kind: 'commentary' | 'instructions' | 'thinking', content: string, delegationId: string | null): string {
     this.requireReady();
     // Conservative byte cap keeps brief multilingual appends below the API token limit.
     if (!content.trim() || Buffer.byteLength(content, 'utf8') > 500) throw new Error('Append exceeds 500 UTF-8 bytes');
@@ -139,8 +142,8 @@ export class LiveClient {
       if (this.delegations.size >= 1024) { this.finish(false, 'delegation_limit'); return; }
       this.delegations.add(e.delegation.id);
       this.emit({ type: 'delegation', id: e.delegation.id, target: e.delegation.target, offsetMs: e.offset_ms });
-    } else if ((e.type === 'session.commentary.appended' || e.type === 'session.instructions.appended') && typeof e.client_event_id === 'string') {
-      this.emit({ type: e.type === 'session.commentary.appended' ? 'commentaryAccepted' : 'instructionsAccepted', clientEventId: e.client_event_id });
+    } else if ((e.type === 'session.commentary.appended' || e.type === 'session.instructions.appended' || e.type === 'session.thinking.appended') && typeof e.client_event_id === 'string') {
+      this.emit({ type: e.type === 'session.commentary.appended' ? 'commentaryAccepted' : e.type === 'session.instructions.appended' ? 'instructionsAccepted' : 'thinkingAccepted', clientEventId: e.client_event_id });
     }
   }
   private finish(complete: boolean, reason: string): void {
