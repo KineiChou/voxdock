@@ -64,6 +64,28 @@ importers:
         specifier: 8.18.1
         version: 8.18.1
 
+  packages/telegram:
+    dependencies:
+      big-integer:
+        specifier: 1.6.52
+        version: 1.6.52
+      ntgcalls:
+        specifier: 3.0.0-rc03
+        version: 3.0.0-rc03
+      teleproto:
+        specifier: 1.229.0
+        version: 1.229.0
+
+  packages/whatsapp:
+    dependencies:
+      ws:
+        specifier: 8.21.3
+        version: 8.21.3
+    devDependencies:
+      '@types/ws':
+        specifier: 8.18.1
+        version: 8.18.1
+
 packages:
 
   '@esbuild/aix-ppc64@0.25.12':
@@ -387,6 +409,30 @@ packages:
     cpu: [x64]
     os: [linux]
 
+  '@ntgcalls/darwin-arm64@3.0.0-rc03':
+    resolution: {integrity: sha512-vnGiivON8gAGRppnrro5Q1JybK/Aj3VaHKDp3LNQS9xcJwS0Xx4tNnMndclE8vu+k0VIu34SQrwiDzfvJov55A==}
+    engines: {node: '>=18'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@ntgcalls/linux-arm64@3.0.0-rc03':
+    resolution: {integrity: sha512-I4kQf++hiJNGNWEHULvQjbfmQZojjZ+GF82NOCt51rAnK2tM1iWKx+r5Vc+cAVtAuPJO5Y9Xmd85kV84jEvxKw==}
+    engines: {node: '>=18'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@ntgcalls/linux-x64@3.0.0-rc03':
+    resolution: {integrity: sha512-EgM67J9Z4AGGPNOOWA4vaTvcboYxKmFvS+GBuNXusZJKhfdoP32tMV757lIwZTbYYVT+m7eEn2QNLUZ98VDi+w==}
+    engines: {node: '>=18'}
+    cpu: [x64]
+    os: [linux]
+
+  '@ntgcalls/win32-x64@3.0.0-rc03':
+    resolution: {integrity: sha512-t2XTcj6KBDcV+GNbym7SpgOTVexiTLkXyTRkghzS5d7RCmD4VL5BqRgrwONt9sK1b+KQOzOfv+djYav86J+WmQ==}
+    engines: {node: '>=18'}
+    cpu: [x64]
+    os: [win32]
+
   '@rollup/rollup-android-arm-eabi@4.63.3':
     resolution: {integrity: sha512-w3Jnvi1ocaVm/c7yVPpfB98XeSRBMyzp6njL5MVVbGyXjpmUkN+s6Hp4t0PqhGCCaI1ZHMKXt/w0lA1RCaLVcw==}
     cpu: [arm]
@@ -576,6 +622,10 @@ packages:
     resolution: {integrity: sha512-eGbYq2CT+tos1fBwLQ/tkBt9J5M3JEHjku4hbvQUePCckkvVf14xWj+1m7dGoK81M/fOjFT7yM9UMeKT/+vFLQ==}
     engines: {node: 20.x || 22.x || 23.x || 24.x}
 
+  big-integer@1.6.52:
+    resolution: {integrity: sha512-QxD8cf2eVqJOOz63z6JIN9BzvVs/dlySa5HGSBH5xtR8dPteIRQnBxxKqkNTiT6jbDTF6jAfrd4oMcND9RGbQg==}
+    engines: {node: '>=0.6'}
+
   bindings@1.5.0:
     resolution: {integrity: sha512-p2q/t/mhvuOj/UeLlV6566GD/guowlr0hHxClI0W9m7MWYkL1F0hLo+0Aexs9HSPCtR1SXQ0TD3MMKrXZajbiQ==}
 
@@ -678,14 +728,25 @@ packages:
   github-from-package@0.0.0:
     resolution: {integrity: sha512-SyHy3T1v2NUXn29OsWdxmK6RwHD+vkj3v8en8AOBZ1wBQ/hCAQ5bAQTD02kW4W9tUp/3Qh6J8r9EvntiyCmOOw==}
 
+  graceful-fs@4.2.11:
+    resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
+
   ieee754@1.2.1:
     resolution: {integrity: sha512-dcyqhDvX1C46lXZcVqCpK+FtMRQVdIMN6/Df5js2zouUsqG7I6sFxitIC+7KYK29KdXOLHdu9zL4sFnoVQnqaA==}
+
+  imurmurhash@0.1.4:
+    resolution: {integrity: sha512-JmXMZ6wuvDmLiHEml9ykzqO6lwFbof0GG4IkcGaENdCRDDmMVnny7s5HsIgHCbaq0w2MyPhDqkhTUgS2LU2PHA==}
+    engines: {node: '>=0.8.19'}
 
   inherits@2.0.4:
     resolution: {integrity: sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==}
 
   ini@1.3.8:
     resolution: {integrity: sha512-JV/yugV2uzW5iMRSiZAyDtQd+nxtUnjeLt0acNdw98kKLrvuRVyB80tsREOE7yvGVgalhZ6RNXCmEHkUKBKxew==}
+
+  ip-address@10.7.2:
+    resolution: {integrity: sha512-7H/2gFSIitxc0hG3nOI1glS8QLo/EHBFFLk8vEUjXY/xu0AdL8jZ9U1IzO2PUm0d2D/ofQcAifb0g6OBkt8U7w==}
+    engines: {node: '>= 12'}
 
   js-tokens@9.0.1:
     resolution: {integrity: sha512-mxa9E9ITFOt0ban3j6L5MpjwegGz6lBQmM1IJkWeBZGcMxto50+eWdjC/52xDbS2vy0k7vIMK0Fe2wfL9OQSpQ==}
@@ -695,6 +756,11 @@ packages:
 
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
+
+  mime@3.0.0:
+    resolution: {integrity: sha512-jSCU7/VB1loIWBZe14aEYHU/+1UMEHoaO7qxCOVJOw9GgH72VAWppxNcjU+x9a2k3GSIBXNKxXQFqRvvZ7vr3A==}
+    engines: {node: '>=10.0.0'}
+    hasBin: true
 
   mimic-response@3.1.0:
     resolution: {integrity: sha512-z0yWI+4FDrrweS8Zmt4Ej5HdJmky15+L2e6Wgn3+iK5fWzb6T3fhNFq2+MeTRb064c6Wr4N/wv0DzQTjNzHNGQ==}
@@ -720,6 +786,14 @@ packages:
   node-abi@3.96.0:
     resolution: {integrity: sha512-rebQ/lz7i0EkoLzUVSrKRzA69zMkwLp95kKMWoMDkkM00Suxz0D7zEQPwRml5fQum24mj7bPvmlgLAmu2JCiYg==}
     engines: {node: '>=10'}
+
+  node-localstorage@2.2.1:
+    resolution: {integrity: sha512-vv8fJuOUCCvSPjDjBLlMqYMHob4aGjkmrkaE42/mZr0VT+ZAU10jRF8oTnX9+pgU9/vYJ8P7YT3Vd6ajkmzSCw==}
+    engines: {node: '>=0.12'}
+
+  ntgcalls@3.0.0-rc03:
+    resolution: {integrity: sha512-muqTfOVVJxe/vW7b9u0Samqtc2NUBl8QflH9fMgSvfDEYhttCiqs3ZrDrYltNaP+3V2cRbVqwzz21MOJ3rE9SQ==}
+    engines: {node: '>=18'}
 
   once@1.4.0:
     resolution: {integrity: sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w==}
@@ -784,6 +858,17 @@ packages:
   simple-get@4.0.1:
     resolution: {integrity: sha512-brv7p5WgH0jmQJr1ZDDfKDOSeWWg+OVypG99A/5vYGPqJ6pxiaHLy8nxtFjBA7oMa01ebA9gfh1uMCFqOuXxvA==}
 
+  slide@1.1.6:
+    resolution: {integrity: sha512-NwrtjCg+lZoqhFU8fOwl4ay2ei8PaqCBOUV3/ektPY9trO1yQ1oXEfmHAhKArUVUr/hOHvy5f6AdP17dCM0zMw==}
+
+  smart-buffer@4.2.0:
+    resolution: {integrity: sha512-94hK0Hh8rPqQl2xXc3HsaBoOXKV20MToPkcXvwbISWLEs+64sBq5kFgn2kJDHb1Pry9yrP0dxrCI9RRci7RXKg==}
+    engines: {node: '>= 6.0.0', npm: '>= 3.0.0'}
+
+  socks@2.8.10:
+    resolution: {integrity: sha512-e0VyvkVTwVYViNovRkZ9aodhxVlyoMn7eJhVUPxZ+eK9P/7CBkxvvsBOHqFPEH416726W8tLXXXjKwqgTErrCQ==}
+    engines: {node: '>= 10.0.0', npm: '>= 3.0.0'}
+
   source-map-js@1.2.1:
     resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
     engines: {node: '>=0.10.0'}
@@ -793,6 +878,9 @@ packages:
 
   std-env@3.10.0:
     resolution: {integrity: sha512-5GS12FdOZNliM5mAOxFRg7Ir0pWz8MdpYm6AY6VPkGpbA7ZzmbzNcBJQ0GPvvyWgcY7QAhCgf9Uy89I03faLkg==}
+
+  store2@2.14.4:
+    resolution: {integrity: sha512-srTItn1GOvyvOycgxjAnPA63FZNwy0PTyUBFMHRM+hVFltAeoh0LmNBz9SZqUS9mMqGk8rfyWyXn3GH5ReJ8Zw==}
 
   string_decoder@1.3.0:
     resolution: {integrity: sha512-hkRX8U1WjJFd8LsDJ2yQ/wWWxaopEsABU1XfkM8A+j0+85JAGppt16cr1Whg6KIbb4okU6Mql6BOj+uup/wKeA==}
@@ -810,6 +898,10 @@ packages:
   tar-stream@2.2.0:
     resolution: {integrity: sha512-ujeqbceABgwMZxEJnk2HDY2DlnUZ+9oEcb1KzTVfYHio0UE6dG71n60d8D2I4qNvleWrrXpmjpt7vZeF1LnMZQ==}
     engines: {node: '>=6'}
+
+  teleproto@1.229.0:
+    resolution: {integrity: sha512-aEKx22ZS76SYy26eWR+2oV5XM4+orbq/2ZINvSKoV2SZERn6yqq9mw5lNK22nCax7lTnC0gcz8uqP26gaUxEqA==}
+    engines: {node: '>=18'}
 
   tinybench@2.9.0:
     resolution: {integrity: sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==}
@@ -932,6 +1024,9 @@ packages:
 
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
+
+  write-file-atomic@1.3.4:
+    resolution: {integrity: sha512-SdrHoC/yVBPpV0Xq/mUZQIpW2sWXAShb/V4pomcJXh92RuaO+f3UTWItiR3Px+pLnV2PvC2/bfn5cwr5X6Vfxw==}
 
   ws@8.21.3:
     resolution: {integrity: sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==}
@@ -1108,6 +1203,18 @@ snapshots:
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     optional: true
 
+  '@ntgcalls/darwin-arm64@3.0.0-rc03':
+    optional: true
+
+  '@ntgcalls/linux-arm64@3.0.0-rc03':
+    optional: true
+
+  '@ntgcalls/linux-x64@3.0.0-rc03':
+    optional: true
+
+  '@ntgcalls/win32-x64@3.0.0-rc03':
+    optional: true
+
   '@rollup/rollup-android-arm-eabi@4.63.3':
     optional: true
 
@@ -1261,6 +1368,8 @@ snapshots:
       bindings: 1.5.0
       prebuild-install: 7.1.3
 
+  big-integer@1.6.52: {}
+
   bindings@1.5.0:
     dependencies:
       file-uri-to-path: 1.0.0
@@ -1393,11 +1502,17 @@ snapshots:
 
   github-from-package@0.0.0: {}
 
+  graceful-fs@4.2.11: {}
+
   ieee754@1.2.1: {}
+
+  imurmurhash@0.1.4: {}
 
   inherits@2.0.4: {}
 
   ini@1.3.8: {}
+
+  ip-address@10.7.2: {}
 
   js-tokens@9.0.1: {}
 
@@ -1406,6 +1521,8 @@ snapshots:
   magic-string@0.30.21:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.6.0
+
+  mime@3.0.0: {}
 
   mimic-response@3.1.0: {}
 
@@ -1422,6 +1539,17 @@ snapshots:
   node-abi@3.96.0:
     dependencies:
       semver: 7.8.5
+
+  node-localstorage@2.2.1:
+    dependencies:
+      write-file-atomic: 1.3.4
+
+  ntgcalls@3.0.0-rc03:
+    optionalDependencies:
+      '@ntgcalls/darwin-arm64': 3.0.0-rc03
+      '@ntgcalls/linux-arm64': 3.0.0-rc03
+      '@ntgcalls/linux-x64': 3.0.0-rc03
+      '@ntgcalls/win32-x64': 3.0.0-rc03
 
   once@1.4.0:
     dependencies:
@@ -1522,11 +1650,22 @@ snapshots:
       once: 1.4.0
       simple-concat: 1.0.1
 
+  slide@1.1.6: {}
+
+  smart-buffer@4.2.0: {}
+
+  socks@2.8.10:
+    dependencies:
+      ip-address: 10.7.2
+      smart-buffer: 4.2.0
+
   source-map-js@1.2.1: {}
 
   stackback@0.0.2: {}
 
   std-env@3.10.0: {}
+
+  store2@2.14.4: {}
 
   string_decoder@1.3.0:
     dependencies:
@@ -1552,6 +1691,14 @@ snapshots:
       fs-constants: 1.0.0
       inherits: 2.0.4
       readable-stream: 3.6.2
+
+  teleproto@1.229.0:
+    dependencies:
+      big-integer: 1.6.52
+      mime: 3.0.0
+      node-localstorage: 2.2.1
+      socks: 2.8.10
+      store2: 2.14.4
 
   tinybench@2.9.0: {}
 
@@ -1666,5 +1813,11 @@ snapshots:
       stackback: 0.0.2
 
   wrappy@1.0.2: {}
+
+  write-file-atomic@1.3.4:
+    dependencies:
+      graceful-fs: 4.2.11
+      imurmurhash: 0.1.4
+      slide: 1.1.6
 
   ws@8.21.3: {}

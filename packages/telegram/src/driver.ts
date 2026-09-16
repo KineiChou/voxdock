@@ -35,7 +35,7 @@ export class TelegramDriver {
   private readonly target: bigint;
   private readonly account: bigint;
   private readonly callbacks: TelegramCallbacks;
-  private active?: ActiveCall;
+  private active: ActiveCall | undefined;
   private incoming = new Map<string, Api.PhoneCallRequested>();
   private updates = Promise.resolve();
   private readonly removeHandlers: Array<() => void>;
