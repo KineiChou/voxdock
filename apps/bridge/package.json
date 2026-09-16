@@ -7,8 +7,13 @@
     "@voxdock/contracts": "workspace:*",
     "@voxdock/config": "workspace:*",
     "@voxdock/core": "workspace:*",
+    "@voxdock/runtime": "workspace:*",
     "@sinclair/typebox": "0.34.41",
     "fastify": "5.12.5",
-    "@fastify/swagger": "9.8.1"
+    "@fastify/swagger": "9.8.1",
+    "better-sqlite3": "12.2.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "7.6.13"
   }
 }

@@ -9,6 +9,7 @@
     "pnpm": ">=10 <11"
   },
   "scripts": {
+    "voxdock": "node --import tsx apps/bridge/src/cli.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

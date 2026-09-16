@@ -38,9 +38,19 @@ importers:
       '@voxdock/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@voxdock/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+      better-sqlite3:
+        specifier: 12.2.0
+        version: 12.2.0
       fastify:
         specifier: 5.12.5
         version: 5.12.5
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: 7.6.13
+        version: 7.6.13
 
   examples/backend:
     dependencies:
@@ -121,6 +131,36 @@ importers:
       '@types/ws':
         specifier: 8.18.1
         version: 8.18.1
+
+  packages/runtime:
+    dependencies:
+      '@voxdock/audio':
+        specifier: workspace:*
+        version: link:../audio
+      '@voxdock/backend':
+        specifier: workspace:*
+        version: link:../backend
+      '@voxdock/config':
+        specifier: workspace:*
+        version: link:../config
+      '@voxdock/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@voxdock/core':
+        specifier: workspace:*
+        version: link:../core
+      '@voxdock/live':
+        specifier: workspace:*
+        version: link:../live
+      '@voxdock/telegram':
+        specifier: workspace:*
+        version: link:../telegram
+      '@voxdock/whatsapp':
+        specifier: workspace:*
+        version: link:../whatsapp
+      tsx:
+        specifier: 4.20.5
+        version: 4.20.5
 
   packages/telegram:
     dependencies:

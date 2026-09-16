@@ -212,14 +212,18 @@ export async function createRuntime(options: { config: BridgeConfig; store: Call
   async function start(call: CallStatus, incomingRef?: string): Promise<void> {
     const route = routes.get(call.target_id);
     if (store.getCall(call.call_id).state !== 'requested' || active) return;
-    if (!route || !backend || closing || !readyChannels.has(route.target.channel)) { store.transition(call.call_id, 'ended', { reason: 'runtime_unavailable' }); return; }
+    if (!route || !backend || closing || store.isPaused(!config.calling.enabled) || !readyChannels.has(route.target.channel)) {
+      store.transition(call.call_id, 'ended', { reason: 'runtime_unavailable' });
+      if (incomingRef && route) await route.voice.reject(incomingRef).catch(() => {});
+      return;
+    }
     let context: BackendContext;
     try {
       store.reserveUsage(call.call_id, { dailySeconds: config.calling.daily_live_seconds, maxSeconds: config.calling.max_call_seconds, timeZone: config.timezone });
       context = await backend.context(call, route.target.principal_ref, 'before_dial');
       if (disposed) return;
-      if (closing || context.obsolete || Date.parse(call.expires_at) <= Date.now() || store.getCall(call.call_id).state !== 'requested') {
-        if (store.getCall(call.call_id).state === 'requested') store.transition(call.call_id, 'ended', { reason: context.obsolete ? 'context_obsolete' : 'expired' });
+      if (closing || store.isPaused(!config.calling.enabled) || context.obsolete || Date.parse(call.expires_at) <= Date.now() || store.getCall(call.call_id).state !== 'requested') {
+        if (store.getCall(call.call_id).state === 'requested') store.transition(call.call_id, 'ended', { reason: context.obsolete ? 'context_obsolete' : store.isPaused(false) ? 'paused' : 'expired' });
         store.settleUsage(call.call_id, 0); if (incomingRef) await route.voice.reject(incomingRef); return;
       }
     } catch {
@@ -232,8 +236,9 @@ export async function createRuntime(options: { config: BridgeConfig; store: Call
     const a: Active = { callId: call.call_id, route, controller: new AbortController(), context, revision: 1, seq: 0,
       fragments: [], transcriptIds: new Set(), delegations: new Map(), results: new Set(), mediaReady: false, startingLive: false, greeted: false, stopping: false, liveFinalized: false,
       ...(incomingRef ? { providerRef: incomingRef } : {}), };
+    // Persist dispatch before the platform side effect; persistence failure must prevent dialing.
+    store.transition(a.callId, incomingRef ? 'ringing' : 'dialing', incomingRef ? { provider_call_ref: incomingRef } : {});
     active = a;
-    safeTransition(a, incomingRef ? 'ringing' : 'dialing', incomingRef ? { provider_call_ref: incomingRef } : {});
     a.ringTimer = setTimeout(() => { void stop(a, 'ring_timeout'); }, config.calling.ring_timeout_seconds * 1000);
     try {
       const ref = incomingRef ? await route.voice.accept(incomingRef, a.controller.signal) : await route.voice.dial(route.peerId, a.controller.signal);

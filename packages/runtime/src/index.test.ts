@@ -82,6 +82,16 @@ test('runtime delivers durable call events and acknowledges the outbox', async (
     expect(f.store.pendingEvents()).toHaveLength(0);
   } finally { await f.close(); vi.useRealTimers(); }
 });
+test('a pause during asynchronous preflight prevents the platform side effect', async () => {
+  const f = await fixture();
+  try {
+    f.context.mockImplementationOnce(async () => { f.store.setPaused(true); return facts; });
+    const call = request(f.store);
+    await f.runtime.onCallCreated(call);
+    expect(f.dial).not.toHaveBeenCalled();
+    expect(f.store.getCall(call.call_id)).toMatchObject({ state: 'ended', reason: 'paused' });
+  } finally { await f.close(); }
+});
 test('foreign incoming calls never receive Live; approved incoming is durably admitted before accept', async () => {
   const f = await fixture();
   try {
