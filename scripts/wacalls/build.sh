@@ -19,7 +19,7 @@ git -C "$build_dir/source" checkout --detach "$revision"
 git -C "$build_dir/source" apply --check "$repo_dir/patches/wacalls/media-websocket.patch"
 git -C "$build_dir/source" apply "$repo_dir/patches/wacalls/media-websocket.patch"
 cd -- "$build_dir/source"
-env GOOS="$(go env GOHOSTOS)" GOARCH="$(go env GOHOSTARCH)" go test ./cmd/server
+env GOOS="$(go env GOHOSTOS)" GOARCH="$(go env GOHOSTARCH)" go test ./cmd/server ./internal/voip/call
 mkdir -p "$build_dir/artifacts"
 go build -trimpath -o "$build_dir/artifacts/wacalls-server" ./cmd/server
 env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "$build_dir/artifacts/wacalls-server-linux-amd64" ./cmd/server
