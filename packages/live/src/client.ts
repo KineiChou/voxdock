@@ -19,9 +19,9 @@ export type LiveEvent =
   | { type: 'audio'; pcm: Buffer }
   | { type: 'transcript'; speaker: 'user' | 'assistant'; delta: string; startMs: number; endMs: number; eventId?: string }
   | { type: 'delegation'; id: string; target: string; offsetMs: number }
-  | { type: 'commentaryAccepted'; clientEventId: string }
+  | { type: 'commentaryAccepted' | 'instructionsAccepted'; clientEventId: string }
   | { type: 'usage'; seconds: number }
-  | { type: 'fault'; code: string }
+  | { type: 'fault'; code: string; clientEventId?: string }
   | { type: 'closed'; finalization: 'complete' | 'incomplete'; reason: string; seconds?: number };
 
 const object = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -68,11 +68,18 @@ export class LiveClient {
     this.send({ type: 'session.input_audio.append', audio: Buffer.from(pcm).toString('base64') });
   }
   commentary(content: string, delegationId: string | null = null): string {
+    return this.append('commentary', content, delegationId);
+  }
+  instructions(content: string, delegationId: string | null = null): string {
+    return this.append('instructions', content, delegationId);
+  }
+  private append(kind: 'commentary' | 'instructions', content: string, delegationId: string | null): string {
     this.requireReady();
-    if (!content.trim() || content.length > 8000) throw new Error('Invalid commentary');
+    // Conservative byte cap keeps brief multilingual appends below the API token limit.
+    if (!content.trim() || Buffer.byteLength(content, 'utf8') > 500) throw new Error('Append exceeds 500 UTF-8 bytes');
     if (delegationId !== null && !this.delegations.has(delegationId)) throw new Error('Unknown delegation');
     const id = randomUUID();
-    this.send({ type: 'session.commentary.append', event_id: id, delegation_id: delegationId, content });
+    this.send({ type: `session.${kind}.append`, event_id: id, delegation_id: delegationId, content });
     return id;
   }
   close(): void {
@@ -98,7 +105,13 @@ export class LiveClient {
     let e: Record<string, unknown>;
     try { const parsed: unknown = JSON.parse(text); if (!object(parsed) || typeof parsed.type !== 'string') throw new Error(); e = parsed; }
     catch { this.finish(false, 'malformed_event'); return; }
-    if (e.type === 'error') { this.emit({ type: 'fault', code: 'server_error' }); this.finish(false, 'server_error'); return; }
+    if (e.type === 'error') {
+      const detail = object(e.error) ? e.error : {};
+      const code = typeof detail.code === 'string' && /^[a-z0-9_]{1,80}$/.test(detail.code) ? detail.code : 'server_error';
+      this.emit({ type: 'fault', code, ...(typeof detail.client_event_id === 'string' ? { clientEventId: detail.client_event_id } : {}) });
+      if (this.state === 'starting') this.finish(false, 'start_rejected');
+      return;
+    }
     if (e.type === 'session.started') {
       if (this.state !== 'starting' || !object(e.session) || typeof e.session.id !== 'string') { this.finish(false, 'invalid_start'); return; }
       clearTimeout(this.timer); this.state = 'ready'; this.emit({ type: 'ready', sessionId: e.session.id }); return;
@@ -126,8 +139,8 @@ export class LiveClient {
       if (this.delegations.size >= 1024) { this.finish(false, 'delegation_limit'); return; }
       this.delegations.add(e.delegation.id);
       this.emit({ type: 'delegation', id: e.delegation.id, target: e.delegation.target, offsetMs: e.offset_ms });
-    } else if (e.type === 'session.commentary.appended' && typeof e.client_event_id === 'string') {
-      this.emit({ type: 'commentaryAccepted', clientEventId: e.client_event_id });
+    } else if ((e.type === 'session.commentary.appended' || e.type === 'session.instructions.appended') && typeof e.client_event_id === 'string') {
+      this.emit({ type: e.type === 'session.commentary.appended' ? 'commentaryAccepted' : 'instructionsAccepted', clientEventId: e.client_event_id });
     }
   }
   private finish(complete: boolean, reason: string): void {

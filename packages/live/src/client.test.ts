@@ -27,8 +27,8 @@ describe('Live primary protocol', () => {
     s.receive({ type: 'session.commentary.appended', client_event_id: id });
     expect(s.events.at(-1)).toEqual({ type: 'commentaryAccepted', clientEventId: id });
     s.client.close();
-    s.receive({ type: 'session.closed', reason: 'client_requested', usage: { seconds: 1.5 } });
-    expect(s.events.at(-1)).toEqual({ type: 'closed', finalization: 'complete', reason: 'client_requested', seconds: 1.5 });
+    s.receive({ type: 'session.closed', reason: 'close_requested', usage: { seconds: 1.5 } });
+    expect(s.events.at(-1)).toEqual({ type: 'closed', finalization: 'complete', reason: 'close_requested', seconds: 1.5 });
     expect(s.transport.terminate).toHaveBeenCalledTimes(1);
   });
   it('preserves transcript timing and output samples without invented turns or audio timestamps', () => {
@@ -65,4 +65,17 @@ describe('Live primary protocol', () => {
     expect(s.events.at(-1)).toMatchObject({ finalization: 'incomplete', reason: 'start_timeout' });
     vi.useRealTimers();
   });
+});
+
+it('keeps command rejection separate from finalization and bounds multilingual appends', () => {
+  const s = setup(); s.ready();
+  const id = s.client.instructions('Introduce yourself and greet the caller.');
+  expect(s.sent.at(-1)).toMatchObject({ type: 'session.instructions.append', delegation_id: null, event_id: id });
+  expect(() => s.client.commentary('界'.repeat(167))).toThrow('500 UTF-8 bytes');
+  s.receive({ type: 'error', error: { code: 'invalid_request', client_event_id: id, message: 'private text' } });
+  expect(s.events.at(-1)).toEqual({ type: 'fault', code: 'invalid_request', clientEventId: id });
+  expect(s.transport.terminate).not.toHaveBeenCalled();
+  s.client.close();
+  s.receive({ type: 'session.closed', reason: 'close_requested', usage: { seconds: 2 } });
+  expect(s.events.at(-1)).toMatchObject({ finalization: 'complete', seconds: 2 });
 });

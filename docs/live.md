@@ -19,3 +19,16 @@ On 2026-09-16 the implementation was checked against official [primary WebSocket
 Deterministic tests cover startup gating, wire shapes, delegation and commentary correlation, fragment timing, output decoding, bounded buffering, close timeout, incomplete finalization, late-event suppression, sample math, silence, pacing, and injected resampler process cleanup/limits. These are protocol/unit tests with injected transport, not proof of model availability, real-network compatibility, native media quality, latency, or actual phone calls. Real audio and account smoke tests remain required before claiming those capabilities.
 
 The transport pins ws 8.21.3 after checking upstream [release notes](https://github.com/websockets/ws/releases/tag/8.21.3) and the [fragment exhaustion advisory](https://github.com/websockets/ws/security/advisories/GHSA-96hv-2xvq-fx4p), fixed in 8.21.0. Earlier 8.18.x candidates were discarded before integration. This is an upstream advisory check, not a complete security audit.
+
+## Review corrections
+
+A command rejection does not establish session termination. The client now reports
+a sanitized fault and continues awaiting the actual final event; startup rejection
+still ends an unusable session. A regression test preserves final usage after a
+rejected append.
+
+Both commentary and instruction appends enforce a conservative 500 UTF-8 byte
+cap, instead of accepting 8,000 characters against the provider's 500-token limit.
+Long business results should be summarized into short factual statements by the
+backend. `instructions()` supports the explicit greeting request; its acknowledgment
+is not proof that the caller heard it.
