@@ -5,16 +5,18 @@ Evidence date: 2026-09-16. This repository is a source alpha, not an accepted pr
 | Area | Evidence available | Still required |
 | --- | --- | --- |
 | Control/state | Automated tests for durable admission, idempotency, state transitions, recovery and retention | Deployed process failure/recovery exercises with real platform state |
-| Backend | Contract, correlation, authenticated requests, signed-event and receipt tests; independent SQLite example | Operator backend integration and actual business execution |
+| Backend | Contract, signed-event and receipt tests; independent SQLite example with durable simulated completion callbacks after restart/hangup | Operator backend integration and actual business execution |
 | Live | Injected primary-WebSocket tests for startup, audio, delegation, commentary and finite finalization | Account access, a paid session, observed greeting, interruption and returned final usage |
-| Audio | Bounded frame/pacing and injected persistent-FFmpeg process tests | Real FFmpeg duplex sample counts, latency, drift, clipping and long-run audio quality |
-| Telegram | Account-free NTgCalls load/create/external-input/cleanup on macOS arm64 Node 24.21.0; signaling fixtures | Login and target verification, genuine outgoing/incoming calls, handset events and duplex voice |
-| WhatsApp | Pinned Go server tests, race-enabled media tests, loopback PCM and host/Linux amd64 builds; Node client fixtures | Combined deployed Node/Go operation, account pairing, real calls and full runtime admission |
-| Packaging | Configuration/schema and Compose/static checks | Linux container builds/runs, Linux native loading, permissions and persistence after restart |
+| Audio | Actual paced synthetic 48↔24 kHz conversion on FFmpeg 6.0/macOS arm64 and 6.1.1/Linux; exact sample counts, waveform order and bounded queue | Handset latency, drift, clipping and long-run audio quality |
+| Telegram | Account-free NTgCalls load/create/external-input/cleanup on macOS arm64 and Linux x64 Node 24; signaling fixtures | Login and target verification, genuine outgoing/incoming calls, handset events and duplex voice |
+| WhatsApp | Pinned Go server/core tests, race checks, loopback PCM and host/Linux amd64 builds; shared coordinator and identity/termination fixtures | Deployed media operation, account pairing, real calls and stored identity resolution |
+| Packaging | Actual Linux CLI init/doctor/start/authentication/process-lock/pause/shutdown/restart; configuration/schema and Compose checks | Container checks and deployment with operator account volumes |
 | Operational endurance | Bounded cleanup/queue behavior covered locally | 24-hour idle/active endurance, resource use and independent platform disconnection tests |
 | Distribution | Source license and selected dependency notices | Complete binary/source/notice inventory, immutable image digests and a release audit |
 
 Native evidence and exact upstream revisions are in [platforms](platforms.md); Go patch/build evidence is in [WaCalls media](wacalls-media.md). Live and PCM interpretation are documented in [Live/audio](live.md). CI status should be read for the tested commit; no historical green run proves a later change or a live platform capability.
+
+The [Linux service run](https://github.com/KineiChou/voxdock/actions/runs/35108228782) passed 91 tests and the executable/native/FFmpeg checks. Synthetic first output was 59 ms for 48→24 kHz and 43 ms for 24→48 kHz in that run; these are resampler observations, not phone-call latency measurements.
 
 ## Real-call acceptance record
 

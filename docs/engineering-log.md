@@ -1,0 +1,15 @@
+# Engineering record
+
+This records reproducible implementation defects and their fixes. Product brainstorming and private account information are not part of this repository. Development used parallel coding agents under the maintainer's direction, with a coordinating agent reviewing, testing and integrating changes. Maintainer acceptance and live-account validation remain separate. No real-call or business-performance claim follows from simulated tests.
+
+| Date | Defect and cause | Fix and evidence |
+| --- | --- | --- |
+| 2026-09-16 | A result could become eligible after a user correction because source context and backend result versions were conflated | Separate `context_revision` and result `revision`; old-context results remain recorded without playback. [Core PR](https://github.com/KineiChou/voxdock/pull/18), regression tests |
+| 2026-09-16 | NTgCalls byte parameters failed despite generated Buffer typings; empty outgoing DH hashes selected the wrong handshake | Pin the ABI, convert bytes to arrays and use a null outgoing hash. [Platform PR](https://github.com/KineiChou/voxdock/pull/20), account-free native create/PCM/cleanup on macOS and Linux |
+| 2026-09-16 | A root-level native smoke script could not resolve package-isolated pnpm dependencies | Place the smoke in the owning Telegram package; clean Linux CI now resolves it. [Platform PR](https://github.com/KineiChou/voxdock/pull/20) |
+| 2026-09-16 | Context sent as commentary could be spoken before the greeting; a 1.5-second audio gap incorrectly ended quiet calls; pending preflight could bypass a new pause | Quiet context appends, silence pacing, and a final admission check before durable dispatch. [Service PR](https://github.com/KineiChou/voxdock/pull/21), integration regressions |
+| 2026-09-16 | FFmpeg's default probing held paced raw PCM, producing late output or a burst beyond the playback queue | Set only raw-input `probesize=32`; ablation rejected an AVIO variant that lost samples. [Service PR](https://github.com/KineiChou/voxdock/pull/21), actual bidirectional synthetic streaming on macOS and Linux |
+| 2026-09-16 | WaCalls reported ended before asynchronous termination completed and ignored nil/error acknowledgments | Wait for a correlated acknowledgment or peer termination; unknown outcomes retain the reservation. [WaCalls PR](https://github.com/KineiChou/voxdock/pull/22), state/HTTP regression tests |
+| 2026-09-16 | New termination guards read mutable state after unlocking | Capture and recheck under the mutex. A targeted race test reproduced both original paths, then passed with the fix. [WaCalls PR](https://github.com/KineiChou/voxdock/pull/22) |
+
+Known limits remain in [acceptance](acceptance.md) and the relevant module documents. In particular, native relay cleanup has upstream synchronous operations, and actual account, network, phone and paid-model behavior still needs measurement. Future reports should include reproduction, expected/observed behavior, impact, confirmed cause or explicitly unverified hypothesis, fix, verification and the affected commit/PR.

@@ -70,7 +70,7 @@ For a real container configuration, keep `/data`, the container listen address a
 
 ## Optional WaCalls sidecar
 
-WhatsApp control and media components are implemented, but the complete VoxDock runtime route remains experimental/unavailable. Running this sidecar alone does not enable WhatsApp calls in VoxDock.
+WhatsApp uses the same call coordinator as Telegram, with a paired WaCalls account and 16 kHz PCM. The implementation remains experimental until real-call acceptance. Running this sidecar alone does not enable calling.
 
 `Dockerfile.wacalls` builds the pinned upstream plus the [media patch](wacalls-media.md) and its pairing UI from source. It preserves upstream and MLow notices. It is independent of the bridge image. Set up directories and a random shared media secret before selecting the profile:
 
@@ -91,6 +91,8 @@ docker compose -f compose.yaml -f config/compose.pairing.example.yaml \
 ```
 
 Open `http://127.0.0.1:8080` locally. On a remote server, use an SSH local port forward to its loopback port; never bind this API publicly. After pairing, stop the override and restart using only `compose.yaml`. Account data persists in `local/wacalls-data`. Do not share QR codes or session files.
+
+Copy the [WhatsApp configuration example](../config/whatsapp.example.json) into the initialized configuration, retaining the generated control token. Set both `account_ref` values to the exact paired session ID; set `WHATSAPP_TARGET_PHONE` to the other account you control. A personal phone JID is also accepted. For Compose, use `http://wacalls:8080`, `/data` and the container listen address. Share the media secret through `secrets/wacalls-media` relative to `/config`, then configure Live and backend credentials. Startup requires the paired account to be open and its initial upstream call list empty. Unknown LID mappings are rejected. A terminate acknowledgment is signaling evidence; it does not prove the handset UI state.
 
 ## Distribution and support
 
