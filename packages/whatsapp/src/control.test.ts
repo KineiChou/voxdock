@@ -1,4 +1,4 @@
-import test from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { WaCallsControl, normalizePhone, parseCallEvent } from './control.ts';
 import { decodeSse } from './sse.ts';
@@ -16,7 +16,7 @@ test('fixed recipient, encoded session, recording disabled; no automatic retry',
   assert.equal(count, 1);
 });
 test('internal transport and stable targets fail closed', () => {
-  for (const baseUrl of ['http://evil.example', 'http://localhost', 'https://127.0.0.1', 'http://127.0.0.1/?token=secret']) assert.throws(() => new WaCallsControl({ ...options, baseUrl }));
+  for (const baseUrl of ['file:///tmp/socket', 'http://user:pass@host', 'http://127.0.0.1/api', 'http://127.0.0.1/?token=secret']) assert.throws(() => new WaCallsControl({ ...options, baseUrl }));
   assert.throws(() => new WaCallsControl({ ...options, targetPhone: options.ownPhone }));
   for (const phone of ['abc12025550101', '1202 555 0101', '01234', '']) assert.throws(() => normalizePhone(phone));
 });

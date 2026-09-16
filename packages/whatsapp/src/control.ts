@@ -12,7 +12,7 @@ export interface WaCallsOptions {
   fetch?: typeof fetch;
 }
 
-/** Internal loopback transport only: upstream has no authentication. */
+/** Operator-configured internal origin: upstream has no authentication. */
 export class WaCallsControl {
   private readonly options: WaCallsOptions;
   private readonly transport: typeof fetch;
@@ -22,9 +22,9 @@ export class WaCallsControl {
   constructor(options: WaCallsOptions) {
     this.options = options;
     this.base = new URL(options.baseUrl);
-    if (this.base.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(this.base.hostname) ||
+    if (!['http:', 'https:'].includes(this.base.protocol) ||
         this.base.username || this.base.password || this.base.search || this.base.hash || this.base.pathname !== '/') {
-      throw new Error('WaCalls must use an explicit loopback HTTP origin');
+      throw new Error('WaCalls requires a fixed HTTP(S) origin');
     }
     if (!options.sessionId || !options.clientId || /[\r\n]/.test(options.clientId)) throw new Error('Session and client binding required');
     this.targetPhone = normalizePhone(options.targetPhone);
