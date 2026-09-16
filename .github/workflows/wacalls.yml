@@ -1,0 +1,31 @@
+name: WaCalls patch
+on:
+  pull_request:
+    paths:
+      - 'patches/wacalls/**'
+      - 'scripts/wacalls/**'
+      - '.github/workflows/wacalls.yml'
+      - 'Dockerfile.wacalls'
+  push:
+    branches: [main]
+    paths:
+      - 'patches/wacalls/**'
+      - 'scripts/wacalls/**'
+      - '.github/workflows/wacalls.yml'
+permissions:
+  contents: read
+jobs:
+  wacalls:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.4'
+          cache: false
+      - name: Apply pinned patch, test and build
+        run: scripts/wacalls/build.sh "$RUNNER_TEMP/wacalls-build"
+      - name: Check concurrency in changed packages
+        working-directory: ${{ runner.temp }}/wacalls-build/source
+        run: go test -race ./cmd/server ./internal/voip/call
