@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { BackendClient } from '@voxdock/backend';
+import { BackendClient, OutboxWorker } from '@voxdock/backend';
 import type { BridgeConfig } from '@voxdock/config';
 import type { CallStore } from '@voxdock/core';
 import type { BackendContext, CallStatus, Channel, Delegation, DelegationResult, TranscriptFragment } from '@voxdock/contracts';
@@ -110,8 +110,8 @@ export async function createRuntime(options: { config: BridgeConfig; store: Call
       if (context.obsolete) { a.live.instructions('Identify yourself as an AI assistant and say the notification is no longer current. Do not report old task details.'); return; }
       const facts = JSON.stringify({ purpose: context.purpose, facts: context.facts, language: context.language });
       if (Buffer.byteLength(facts) > 8000) throw new Error('Context exceeds bounded spoken briefing');
-      for (const part of chunks(facts)) a.live.commentary(`Business context data: ${part}`);
-      a.live.instructions('Now introduce yourself as an AI assistant, briefly explain the supplied purpose and verified facts, then invite the user to respond.');
+      for (const part of chunks(facts)) a.live.thinking(`Business context data: ${part}`);
+      a.live.instructions('Immediately greet without waiting for the caller. Introduce yourself as an AI assistant in the language supplied with the context, briefly explain the purpose and verified facts, then pause and listen.');
     } catch { await stop(a, 'opening_context_failed'); }
   }
   function transcript(a: Active, event: Extract<LiveEvent, { type: 'transcript' }>): void {
@@ -271,6 +271,14 @@ export async function createRuntime(options: { config: BridgeConfig; store: Call
       } catch { /* Channel remains unavailable; startup never starts interactive authorization. */ }
     }
   }
+  const outbox = backend ? new OutboxWorker(backend, store, config.events.retry_deadline_hours) : undefined;
+  const outboxAbort = new AbortController();
+  let outboxFlight: Promise<unknown> | undefined;
+  const outboxTimer = setInterval(() => {
+    if (!outbox || outboxFlight || closing) return;
+    outboxFlight = outbox.runOnce(10, outboxAbort.signal).catch(() => {}).finally(() => { outboxFlight = undefined; });
+  }, 1000);
+  outboxTimer.unref();
   return {
     readyChannels,
     onCallCreated: call => start(call),
@@ -281,9 +289,11 @@ export async function createRuntime(options: { config: BridgeConfig; store: Call
     onResult,
     async close() {
       closing = true;
+      clearInterval(outboxTimer); outboxAbort.abort();
       if (active) await stop(active, 'shutdown', true);
       await Promise.allSettled([...routes.values()].map(route => deadline(route.voice.close(), 5000)));
       await Promise.allSettled([...finalizing].flatMap(a => a.finalized ? [a.finalized] : []));
+      if (outboxFlight) await deadline(outboxFlight, 1000).catch(() => {});
       readyChannels.clear(); disposed = true;
     },
   };

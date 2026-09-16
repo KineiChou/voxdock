@@ -1,6 +1,6 @@
 import type { Duplex } from 'node:stream';
 import type { BridgeConfig } from '@voxdock/config';
-import type { BackendContext, CallStatus, Channel, Delegation, DelegationResult } from '@voxdock/contracts';
+import type { BackendContext, CallEvent, CallStatus, Channel, Delegation, DelegationResult } from '@voxdock/contracts';
 import type { LiveConfig, LiveEvent } from '@voxdock/live';
 export type TargetConfig = BridgeConfig['targets'][number];
 export interface VoiceEvents {
@@ -23,11 +23,13 @@ export interface VoiceDriver {
 export interface RuntimeBackend {
   context(call: CallStatus, principal: string, phase: 'before_dial' | 'before_greeting'): Promise<BackendContext>;
   delegate(delegation: Delegation): Promise<DelegationResult>;
+  deliverEvent(event: CallEvent, signal?: AbortSignal): Promise<void>;
 }
 export interface RuntimeLive {
   start(): void;
   appendAudio(pcm: Uint8Array): void;
   commentary(content: string, delegationId?: string | null): string;
+  thinking(content: string, delegationId?: string | null): string;
   instructions(content: string, delegationId?: string | null): string;
   close(): void;
 }

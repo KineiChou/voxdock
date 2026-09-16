@@ -14,7 +14,6 @@ export class CallAudio {
   private writing = false;
   private nextLive = performance.now();
   private nextPhone = performance.now();
-  private lastInput = performance.now();
   constructor(private readonly voice: VoiceDriver, private readonly ref: string, rate: 16000 | 24000,
     private readonly live: RuntimeLive, private readonly fail: () => void, resampler?: RuntimeDependencies['resampler']) {
     this.input = new PcmFrameQueue(rate, 20, 500);
@@ -30,7 +29,6 @@ export class CallAudio {
   }
   receive(pcm: Buffer): void {
     if (this.stopped) return;
-    this.lastInput = performance.now();
     try { if (this.toLive) { if (!this.toLive.write(pcm)) this.failed(); } else this.input.push(pcm); } catch { this.failed(); }
   }
   play(pcm: Buffer): void {
@@ -40,7 +38,6 @@ export class CallAudio {
   private tick(): void {
     if (this.stopped) return;
     const now = performance.now();
-    if (now - this.lastInput > 1500) { this.failed(); return; }
     try {
       if (now >= this.nextLive) { this.nextLive = now + 20; this.live.appendAudio(this.input.take(true)!); }
       if (now >= this.nextPhone) {

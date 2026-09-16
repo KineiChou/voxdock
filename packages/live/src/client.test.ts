@@ -71,6 +71,10 @@ it('keeps command rejection separate from finalization and bounds multilingual a
   const s = setup(); s.ready();
   const id = s.client.instructions('Introduce yourself and greet the caller.');
   expect(s.sent.at(-1)).toMatchObject({ type: 'session.instructions.append', delegation_id: null, event_id: id });
+  const context = s.client.thinking('Verified background context.');
+  expect(s.sent.at(-1)).toMatchObject({ type: 'session.thinking.append', delegation_id: null, event_id: context });
+  s.receive({ type: 'session.thinking.appended', client_event_id: context });
+  expect(s.events.at(-1)).toEqual({ type: 'thinkingAccepted', clientEventId: context });
   expect(() => s.client.commentary('界'.repeat(167))).toThrow('500 UTF-8 bytes');
   s.receive({ type: 'error', error: { code: 'invalid_request', client_event_id: id, message: 'private text' } });
   expect(s.events.at(-1)).toEqual({ type: 'fault', code: 'invalid_request', clientEventId: id });

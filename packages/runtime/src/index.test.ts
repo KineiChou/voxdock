@@ -25,23 +25,25 @@ async function fixture(options: { connect?: boolean; obsolete?: boolean } = {}) 
   let liveStarts = 0;
   const context = vi.fn(async () => ({ ...facts, obsolete: options.obsolete ?? false }));
   const delegate = vi.fn(async (input: Delegation): Promise<DelegationResult> => ({ result_id: `result-${input.context_revision}`, call_id: input.call_id, delegation_id: input.delegation_id, context_revision: input.context_revision, revision: input.context_revision, status: 'accepted', spoken_summary: 'The backend accepted the request.' }));
+  const deliverEvent = vi.fn(async () => {});
   const end = vi.fn(async (ref: string) => { callbacks.state(ref, 'ended'); });
   const accept = vi.fn(async (ref: string) => { callbacks.state(ref, 'connected'); callbacks.audioReady(ref); return ref; });
   const reject = vi.fn(async () => {});
   const dial = vi.fn(async () => { if (options.connect !== false) { callbacks.state('provider', 'connected'); callbacks.audioReady('provider'); } return 'provider'; });
   const runtime = await createRuntime({ config: config(), store }, {
-    backend: { context, delegate }, environment: () => '123', resampler: () => new PassThrough(),
+    backend: { context, delegate, deliverEvent }, environment: () => '123', resampler: () => new PassThrough(),
     voice: async (_target, _peer, events) => { callbacks = events; return { rate: 48000, frameMs: 10, dial, accept, reject, end, writeAudio: async () => {}, close: async () => {} }; },
     live: (_settings, listener) => { emit = listener; return {
       start() { liveStarts++; emit({ type: 'ready', sessionId: 'session' }); },
       appendAudio(pcm) { audio.push(pcm); },
       commentary(text, delegationId) { output.push({ kind: 'commentary', text, ...(delegationId === undefined ? {} : { delegationId }) }); return 'append'; },
+      thinking(text) { output.push({ kind: 'thinking', text }); return 'context'; },
       instructions(text) { output.push({ kind: 'instructions', text }); return 'greet'; },
       close() { emit({ type: 'closed', finalization: 'complete', reason: 'closed', seconds: 1 }); },
     }; },
   });
   const flush = () => new Promise(resolve => setTimeout(resolve, 20));
-  return { store, runtime, callbacks, get emit() { return emit; }, output, audio, context, delegate, end, accept, reject, dial, flush, liveStarts: () => liveStarts,
+  return { store, runtime, callbacks, get emit() { return emit; }, output, audio, context, delegate, deliverEvent, end, accept, reject, dial, flush, liveStarts: () => liveStarts,
     async close() { await runtime.close(); store.close(); } };
 }
 test('coordinator dials after context, greets once, delegates with transcript revision, speaks matching result and settles', async () => {
@@ -52,6 +54,8 @@ test('coordinator dials after context, greets once, delegates with transcript re
     expect(f.context).toHaveBeenCalledTimes(2);
     expect(f.store.getCall(call.call_id)).toMatchObject({ state: 'connected', audio_ready: true, live_ready: true, provider_call_ref: 'provider' });
     expect(f.output.filter(item => item.kind === 'instructions')).toHaveLength(1);
+    expect(f.output.filter(item => item.kind === 'commentary')).toHaveLength(0);
+    expect(f.output.some(item => item.kind === 'thinking' && item.text.includes('Tests passed'))).toBe(true);
     f.callbacks.audioReady('provider'); await f.flush();
     expect(f.output.filter(item => item.kind === 'instructions')).toHaveLength(1);
     expect(f.audio.length).toBeGreaterThan(0); // Continuous Live input, even before the first voice frame.
@@ -67,6 +71,16 @@ test('coordinator dials after context, greets once, delegates with transcript re
     expect(f.store.getCall(call.call_id).state).toBe('ended');
     expect(f.store.getRecord(call.call_id).usage).toMatchObject({ status: 'settled', seconds: 1 });
   } finally { await f.close(); }
+});
+test('runtime delivers durable call events and acknowledges the outbox', async () => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  try {
+    await f.runtime.onCallCreated(request(f.store));
+    await vi.advanceTimersByTimeAsync(1005);
+    expect(f.deliverEvent).toHaveBeenCalled();
+    expect(f.store.pendingEvents()).toHaveLength(0);
+  } finally { await f.close(); vi.useRealTimers(); }
 });
 test('foreign incoming calls never receive Live; approved incoming is durably admitted before accept', async () => {
   const f = await fixture();
