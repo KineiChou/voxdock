@@ -66,3 +66,28 @@ test('lost dial response retains reservation and does not retry', async () => {
   expect(f.invoke.mock.calls.filter(([r]) => r instanceof Api.phone.RequestCall)).toHaveLength(1);
   expect(f.callbacks.onState).toHaveBeenLastCalledWith(undefined, 'uncertain');
 });
+
+test('an update for an old call cannot bind an outgoing reservation', async () => {
+  const f = fixture();
+  const original = f.invoke.getMockImplementation()!;
+  f.invoke.mockImplementation(async request => {
+    if (request instanceof Api.phone.RequestCall) {
+      await f.update(new Api.PhoneCallAccepted({ ...common, id: bigInt(11), gB: Buffer.alloc(256) }));
+    }
+    return original(request);
+  });
+  await f.driver.dial('2', AbortSignal.timeout(1000));
+  expect(media.native.exchangeKeys).not.toHaveBeenCalled();
+  await f.update(new Api.PhoneCallAccepted({ ...common, gB: Buffer.alloc(256) }));
+  expect(media.native.exchangeKeys).toHaveBeenCalledTimes(1);
+  await f.driver.end('10');
+});
+test('native connect failure stops media and attempts one platform discard', async () => {
+  const f = fixture();
+  media.connect.mockRejectedValueOnce(new Error('native failure'));
+  await f.driver.dial('2', AbortSignal.timeout(1000));
+  await f.update(new Api.PhoneCallAccepted({ ...common, gB: Buffer.alloc(256) }));
+  expect(f.invoke.mock.calls.filter(([r]) => r instanceof Api.phone.DiscardCall)).toHaveLength(1);
+  expect(f.callbacks.onState).toHaveBeenCalledWith('10', 'uncertain');
+  expect(f.callbacks.onState).toHaveBeenLastCalledWith('10', 'ended');
+});

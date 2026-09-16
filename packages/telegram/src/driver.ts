@@ -26,6 +26,7 @@ interface ActiveCall {
   ending: boolean;
   uncertain: boolean;
   abort?: () => void;
+  discard?: Promise<void>;
 }
 
 /** One configured user target and one in-process call. Durable admission belongs to the host. */
@@ -144,12 +145,12 @@ export class TelegramDriver {
 
   private async handleCall(call: Api.TypePhoneCall): Promise<void> {
     if (call instanceof Api.PhoneCallRequested) {
-      if (this.incoming.size >= 16 || this.incoming.has(call.id.toString())) return;
+      if (this.active?.peer?.id.toString() === call.id.toString() || this.incoming.size >= 16 || this.incoming.has(call.id.toString())) return;
       this.incoming.set(call.id.toString(), call);
       this.callbacks.onIncoming(call.id.toString(), !call.video && call.adminId.toString() === this.target.toString() && call.participantId.toString() === this.account.toString());
       return; // Host must durably admit before calling accept().
     }
-    if (call instanceof Api.PhoneCallDiscarded) this.incoming.delete(call.id.toString());
+    if (call instanceof Api.PhoneCallDiscarded && this.incoming.delete(call.id.toString())) this.callbacks.onState(call.id.toString(), 'ended');
     const active = this.active;
     if (!active) return;
     // A previous call to the same user must not bind the new reservation.
@@ -193,15 +194,24 @@ export class TelegramDriver {
     if (active.ending) return;
     active.ending = true; active.signal?.close();
     this.callbacks.onState(ref, 'ending');
-    try {
-      await active.media.close();
-      const updates = await this.client.invoke(new Api.phone.DiscardCall({ peer: active.peer, duration: 0,
-        reason: new Api.PhoneCallDiscardReasonHangup(), connectionId: bigInt.zero }));
-      if (updates instanceof Api.Updates || updates instanceof Api.UpdatesCombined) {
-        for (const update of updates.updates) if (update instanceof Api.UpdatePhoneCall) await this.handleCall(update.phoneCall);
-      }
-      if (this.active === active) this.fail(); // No terminal evidence: keep the reservation.
-    } catch { this.fail(); }
+    await this.discard(active);
+    if (this.active === active) this.fail(); // No terminal evidence: keep the reservation.
+  }
+
+  private discard(active: ActiveCall): Promise<void> {
+    if (!active.peer) return Promise.resolve();
+    active.discard ??= (async () => {
+      // A native cleanup failure must not prevent the platform hangup attempt.
+      try { await active.media.close(); } catch { /* terminal handler retains uncertainty */ }
+      try {
+        const updates = await this.client.invoke(new Api.phone.DiscardCall({ peer: active.peer!, duration: 0,
+          reason: new Api.PhoneCallDiscardReasonHangup(), connectionId: bigInt.zero }));
+        if (updates instanceof Api.Updates || updates instanceof Api.UpdatesCombined) {
+          for (const update of updates.updates) if (update instanceof Api.UpdatePhoneCall) await this.handleCall(update.phoneCall);
+        }
+      } catch { this.fail(); }
+    })();
+    return active.discard;
   }
 
   async writeAudio(ref: string, pcm: Buffer): Promise<void> {
@@ -211,9 +221,10 @@ export class TelegramDriver {
   }
 
   async close(): Promise<void> {
-    for (const remove of this.removeHandlers) remove();
-    if (this.active?.peer) await this.end(this.active.peer.id.toString());
-    else if (this.active) this.fail();
+    try {
+      if (this.active?.peer) await this.end(this.active.peer.id.toString());
+      else if (this.active) this.fail();
+    } finally { for (const remove of this.removeHandlers) remove(); }
   }
 
   private fail(): void {
@@ -222,5 +233,6 @@ export class TelegramDriver {
     active.uncertain = true; active.signal?.close(); active.abort?.();
     void active.media.close().catch(() => {});
     this.callbacks.onState(active.peer?.id.toString(), 'uncertain');
+    if (active.peer) void this.discard(active);
   }
 }
