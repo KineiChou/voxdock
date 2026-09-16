@@ -1,0 +1,17 @@
+{
+  "name": "@voxdock/runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@voxdock/audio": "workspace:*",
+    "@voxdock/backend": "workspace:*",
+    "@voxdock/config": "workspace:*",
+    "@voxdock/contracts": "workspace:*",
+    "@voxdock/core": "workspace:*",
+    "@voxdock/live": "workspace:*",
+    "@voxdock/telegram": "workspace:*",
+    "tsx": "4.20.5"
+  }
+}

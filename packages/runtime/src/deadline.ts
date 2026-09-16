@@ -1,0 +1,8 @@
+export async function deadline<T>(operation: Promise<T>, milliseconds: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([operation, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Operation deadline exceeded')), milliseconds);
+    })]);
+  } finally { clearTimeout(timer); }
+}
