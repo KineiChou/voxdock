@@ -27,9 +27,11 @@ export class ExampleStore {
     this.db = new Database(filename);
     this.db.pragma("journal_mode=WAL");
     this.db.pragma("synchronous=FULL");
+    this.db.pragma("secure_delete=ON");
     this.db.pragma("busy_timeout=5000");
     this.db
-      .exec(`CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,delegation_id TEXT NOT NULL UNIQUE,call_id TEXT NOT NULL,principal_ref TEXT NOT NULL,revision INTEGER NOT NULL,status TEXT NOT NULL);
+      .exec(`CREATE TABLE IF NOT EXISTS model_work(job_id TEXT PRIMARY KEY,revision INTEGER NOT NULL,state TEXT NOT NULL,input TEXT);
+      CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,delegation_id TEXT NOT NULL UNIQUE,call_id TEXT NOT NULL,principal_ref TEXT NOT NULL,revision INTEGER NOT NULL,status TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS receipts(delegation_id TEXT NOT NULL,revision INTEGER NOT NULL,hash TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(delegation_id,revision));
       CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,hash TEXT NOT NULL,call_id TEXT NOT NULL,revision INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS calls(id TEXT PRIMARY KEY,revision INTEGER NOT NULL,state TEXT NOT NULL);
@@ -39,7 +41,7 @@ export class ExampleStore {
   close(): void {
     this.db.close();
   }
-  delegate(input: Delegation): DelegationResult {
+  delegate(input: Delegation, modelInput?: string): DelegationResult {
     return this.db
       .transaction(() => {
         const hash = digest(input);
@@ -85,7 +87,9 @@ export class ExampleStore {
           status: "accepted",
           business_ref: id,
           spoken_summary:
-            "The example backend saved a simulated job. No real business action was performed.",
+            modelInput === undefined
+              ? "The example backend saved a simulated job. No real business action was performed."
+              : "Your request is saved for a text response. No external actions will be performed.",
         };
         this.db
           .prepare(
@@ -111,9 +115,34 @@ export class ExampleStore {
             "UPDATE callbacks SET status='superseded' WHERE status='pending' AND json_extract(body,'$.delegation_id')=? AND json_extract(body,'$.context_revision')<?",
           )
           .run(input.delegation_id, input.context_revision);
+        if (modelInput !== undefined)
+          this.db.prepare("INSERT INTO model_work VALUES (?,?,'queued',?) ON CONFLICT(job_id) DO UPDATE SET revision=excluded.revision,state='queued',input=excluded.input")
+            .run(id, input.context_revision, modelInput);
         return result;
       })
       .immediate();
+  }
+  claimModelWork(): { job_id: string; revision: number; input: string } | undefined {
+    return this.db.transaction(() => {
+      const work = this.db.prepare("SELECT job_id,revision,input FROM model_work WHERE state='queued' ORDER BY rowid LIMIT 1").get() as { job_id: string; revision: number; input: string } | undefined;
+      if (work) this.db.prepare("UPDATE model_work SET state='running' WHERE job_id=?").run(work.job_id);
+      return work;
+    }).immediate();
+  }
+  finishModelWork(jobId: string, revision: number, status: "completed" | "failed", summary: string): void {
+    this.db.transaction(() => {
+      const work = this.db.prepare("SELECT revision FROM model_work WHERE job_id=? AND state='running'").get(jobId) as { revision: number } | undefined;
+      if (work?.revision !== revision) return;
+      this.complete(jobId, revision, { status, summary });
+      this.db.prepare("UPDATE model_work SET state='terminal',input=NULL WHERE job_id=?").run(jobId);
+    }).immediate();
+    // Old input can remain in backups; checkpoint removes the live WAL copy where possible.
+    this.db.pragma("wal_checkpoint(TRUNCATE)");
+  }
+  recoverModelWork(): void {
+    const interrupted = this.db.prepare("SELECT job_id,revision FROM model_work WHERE state='running'").all() as { job_id: string; revision: number }[];
+    for (const work of interrupted)
+      this.finishModelWork(work.job_id, work.revision, "failed", "The response was interrupted. Its outcome is unknown, and it was not automatically retried.");
   }
   private nextResultRevision(delegationId: string): number {
     const row = this.db
@@ -126,6 +155,7 @@ export class ExampleStore {
   complete(
     jobId: string,
     contextRevision: number,
+    outcome?: { status: "completed" | "failed"; summary: string },
   ): { result: DelegationResult; replayed: boolean } {
     return this.db
       .transaction(() => {
@@ -152,10 +182,10 @@ export class ExampleStore {
           context_revision: contextRevision,
           result_id: randomUUID(),
           revision: this.nextResultRevision(job.delegation_id),
-          status: "completed",
+          status: outcome?.status ?? "completed",
           business_ref: jobId,
           spoken_summary:
-            "The simulated example job is complete. No real business work was executed.",
+            outcome?.summary ?? "The simulated example job is complete. No real business work was executed.",
         };
         const body = JSON.stringify(result);
         const now = this.now().toISOString();
@@ -168,8 +198,8 @@ export class ExampleStore {
           )
           .run(result.result_id, body, now, now);
         this.db
-          .prepare("UPDATE jobs SET status='completed' WHERE id=?")
-          .run(jobId);
+          .prepare("UPDATE jobs SET status=? WHERE id=?")
+          .run(result.status, jobId);
         return { result, replayed: false };
       })
       .immediate();
