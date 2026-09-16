@@ -12,6 +12,7 @@
     "@voxdock/core": "workspace:*",
     "@voxdock/live": "workspace:*",
     "@voxdock/telegram": "workspace:*",
-    "tsx": "4.20.5"
+    "tsx": "4.20.5",
+    "@voxdock/whatsapp": "workspace:*"
   }
 }

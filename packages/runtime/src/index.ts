@@ -9,6 +9,7 @@ import { LiveClient, createOpenAITransport, type LiveEvent } from '@voxdock/live
 import { CallAudio } from './audio.js';
 import { deadline } from './deadline.js';
 import { createTelegramProcess } from './telegram-process.js';
+import { createWhatsAppDriver } from './whatsapp.js';
 import type { Runtime, RuntimeBackend, RuntimeDependencies, RuntimeLive, TargetConfig, VoiceDriver, VoiceEvents } from './types.js';
 export type { Runtime, RuntimeDependencies, VoiceDriver, VoiceEvents } from './types.js';
 
@@ -266,6 +267,9 @@ export async function createRuntime(options: { config: BridgeConfig; store: Call
         else if (target.channel === 'telegram' && config.channels.telegram.enabled) {
           const channel = config.channels.telegram;
           voice = await createTelegramProcess({ apiId: Number(env(channel.api_id_env)), apiHashFile: file(channel.api_hash_file), sessionFile: file(channel.session_file), peerId }, callbacks(target));
+        } else if (target.channel === 'whatsapp' && config.channels.whatsapp.enabled) {
+          const channel = config.channels.whatsapp;
+          voice = await createWhatsAppDriver({ baseUrl: channel.endpoint, sessionId: channel.account_ref, peerId, mediaSecret: await secret(file(channel.media_token_file)) }, callbacks(target));
         } else continue;
         routes.set(target.id, { target, peerId, voice }); readyChannels.add(target.channel);
       } catch { /* Channel remains unavailable; startup never starts interactive authorization. */ }
