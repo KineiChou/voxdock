@@ -51,17 +51,76 @@ describe("configuration", () => {
       }).channels.telegram.enabled,
     ).toBe(false);
   });
+  it("retains targets and credential references when a channel is paused", () => {
+    const result = parseConfig({
+      channels: { telegram: { ...telegram, enabled: false } },
+      targets: [target],
+    });
+    expect(result.channels.telegram).toEqual({ ...telegram, enabled: false });
+    expect(result.targets[0]?.id).toBe(target.id);
+  });
+  it("keeps WhatsApp callable after Telegram is paused with its entries retained", () => {
+    const result = parseConfig({
+      calling: { enabled: true },
+      security: { control_token_file: "/not-read/control" },
+      live: { api_key_file: "/not-read/live" },
+      backend: {
+        id: "backend",
+        base_url: "http://localhost:8090",
+        request_token_file: "/not-read/token",
+        event_signing_key_file: "/not-read/events",
+      },
+      channels: {
+        telegram: { ...telegram, enabled: false },
+        whatsapp: {
+          enabled: true,
+          account_ref: "wa",
+          endpoint: "http://localhost:8080",
+          media_token_file: "/not-read/wa",
+        },
+      },
+      targets: [
+        target,
+        { ...target, id: "owner-wa", channel: "whatsapp", account_ref: "wa" },
+      ],
+    });
+    expect(result.calling.enabled).toBe(true);
+    expect(result.channels.telegram.enabled).toBe(false);
+    expect(result.channels.whatsapp.enabled).toBe(true);
+  });
+  it("does not treat a paused channel target as callable", () => {
+    expect(() =>
+      parseConfig({
+        calling: { enabled: true },
+        security: { control_token_file: "/not-read/control" },
+        live: { api_key_file: "/not-read/live" },
+        backend: {
+          id: "backend",
+          base_url: "http://localhost:8090",
+          request_token_file: "/not-read/token",
+          event_signing_key_file: "/not-read/events",
+        },
+        channels: { telegram: { ...telegram, enabled: false } },
+        targets: [target],
+      }),
+    ).toThrow("Calling requires");
+  });
+  it("accepts independent ringing and connected duration limits", () => {
+    expect(
+      parseConfig({
+        calling: { ring_timeout_seconds: 90, max_call_seconds: 60 },
+      }).calling.max_call_seconds,
+    ).toBe(60);
+  });
   it.each([
     { calling: { max_call_seconds: 0 } },
     { calling: { max_concurrent_calls: 2 } },
     { calling: { redial_attempts: 1 } },
-    { calling: { ring_timeout_seconds: 90, max_call_seconds: 60 } },
     { records: { raw_audio: true } },
     { channels: { telegram: { enabled: true } } },
     { unknown: true },
     { service: { listen: "0.0.0.0:8787" } },
     { calling: { enabled: true } },
-    { targets: [target] },
     { channels: { telegram }, targets: [{ ...target, account_ref: "other" }] },
     { channels: { telegram }, targets: [target, target] },
   ])("rejects invalid or unsafe configuration %#", (input) =>

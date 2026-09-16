@@ -7,10 +7,6 @@ const path = Type.String({ minLength: 1, maxLength: 4096 });
 const env = Type.String({ pattern: "^[A-Z_][A-Z0-9_]*$" });
 const seconds = (value: number, maximum = 86400) =>
   Type.Integer({ minimum: 1, maximum, default: value });
-const disabled = Type.Object(
-  { enabled: Type.Literal(false, { default: false }) },
-  object,
-);
 const telegram = Type.Object(
   {
     enabled: Type.Literal(true),
@@ -27,6 +23,25 @@ const whatsapp = Type.Object(
     account_ref: RefSchema,
     endpoint: Type.String({ pattern: "^https?://" }),
     media_token_file: path,
+  },
+  object,
+);
+const disabledTelegram = Type.Object(
+  {
+    enabled: Type.Literal(false, { default: false }),
+    account_ref: Type.Optional(RefSchema),
+    api_id_env: Type.Optional(env),
+    api_hash_file: Type.Optional(path),
+    session_file: Type.Optional(path),
+  },
+  object,
+);
+const disabledWhatsapp = Type.Object(
+  {
+    enabled: Type.Literal(false, { default: false }),
+    account_ref: Type.Optional(RefSchema),
+    endpoint: Type.Optional(Type.String({ pattern: "^https?://" })),
+    media_token_file: Type.Optional(path),
   },
   object,
 );
@@ -58,10 +73,10 @@ export const BridgeConfigSchema = Type.Object(
     ),
     channels: Type.Object(
       {
-        telegram: Type.Union([disabled, telegram], {
+        telegram: Type.Union([disabledTelegram, telegram], {
           default: { enabled: false },
         }),
-        whatsapp: Type.Union([disabled, whatsapp], {
+        whatsapp: Type.Union([disabledWhatsapp, whatsapp], {
           default: { enabled: false },
         }),
       },
@@ -186,19 +201,19 @@ export function parseConfig(input: unknown): BridgeConfig {
     ids.add(target.id);
     channels.add(target.channel);
     const channel = config.channels[target.channel];
-    if (!channel.enabled || channel.account_ref !== target.account_ref)
+    if (channel.account_ref && channel.account_ref !== target.account_ref)
       throw new ConfigError(
-        "Targets must reference an enabled channel and its configured account",
+        "Targets must reference the configured channel account",
       );
   }
-  if (config.calling.ring_timeout_seconds > config.calling.max_call_seconds)
-    throw new ConfigError("Ring timeout exceeds maximum call duration");
   if (
     config.calling.enabled &&
     (!config.security.control_token_file ||
       !config.live.api_key_file ||
       !config.backend ||
-      !config.targets.some((target) => target.enabled))
+      !config.targets.some(
+        (target) => target.enabled && config.channels[target.channel].enabled,
+      ))
   ) {
     throw new ConfigError(
       "Calling requires a control token reference, Live key reference, backend and enabled target",
@@ -223,9 +238,7 @@ export function parseConfig(input: unknown): BridgeConfig {
     );
   for (const endpoint of [
     config.backend?.base_url,
-    config.channels.whatsapp.enabled
-      ? config.channels.whatsapp.endpoint
-      : undefined,
+    config.channels.whatsapp.endpoint,
   ]) {
     if (!endpoint) continue;
     let url: URL;
