@@ -163,7 +163,7 @@ export async function createRuntime(options: { config: BridgeConfig; store: Call
     try {
       if (event.type === 'ready') {
         a.sessionId = event.sessionId; safeTransition(a, 'connected', { live_ready: true });
-        a.audio = new CallAudio(a.route.voice, a.providerRef!, config.live.sample_rate_hz[a.route.target.channel], a.live!, () => { void stop(a, 'audio_failed'); }, dependencies.resampler);
+        a.audio = new CallAudio(a.route.voice, a.providerRef!, config.live.sample_rate_hz[a.route.target.channel], a.live!, reason => { void stop(a, reason); }, dependencies.resampler);
         void greet(a);
       } else if (event.type === 'audio') a.audio?.play(event.pcm);
       else if (event.type === 'transcript') transcript(a, event);
