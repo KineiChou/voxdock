@@ -1,5 +1,6 @@
 import {
   mkdtempSync,
+  chmodSync,
   readFileSync,
   statSync,
   rmSync,
@@ -40,6 +41,10 @@ it("initializes private paused configuration and reports offline checks without 
   expect(text).toContain("unverified");
   expect(text).not.toContain(token);
   expect(text).not.toContain("telegram_api_hash");
+  chmodSync(join(directory, "control.token"), 0o640);
+  await expect(
+    runCli(["doctor", "--config", configFile], { write: () => {} }),
+  ).rejects.toThrow("doctor_checks_failed");
 });
 it("smokes authenticated CLI status, pause and escaped audit through the control API", async () => {
   const { config } = loadConfig(configFile);
@@ -222,4 +227,125 @@ it("persists recovery pause before runtime initialization and releases locks on 
   await expect(
     runCli(["resume", "--config", configFile], { write: () => {} }),
   ).rejects.toThrow("calling_disabled");
+});
+
+it("exports an allowlisted redacted summary in JSON and HTML while preserving private exports", async () => {
+  const privateValue = "PRIVATE_PAYLOAD_MARKER";
+  const call = {
+    state: "ended",
+    revision: 4,
+    audio_ready: false,
+    live_ready: false,
+    created_at: "2026-09-16T12:00:00Z",
+    updated_at: "2026-09-16T12:01:00Z",
+    expires_at: "2026-09-16T12:05:00Z",
+    call_id: privateValue,
+    target_id: privateValue,
+    context_ref: privateValue,
+    correlation_ref: privateValue,
+    provider_call_ref: privateValue,
+    reason: privateValue,
+    extra: { deep: { credential: privateValue } },
+  };
+  const record = {
+    schema_version: 1,
+    call,
+    events: [
+      {
+        event_id: privateValue,
+        type: privateValue,
+        call_seq: 4,
+        occurred_at: call.updated_at,
+        call,
+      },
+    ],
+    delegations: [
+      {
+        delegation_id: privateValue,
+        principal_ref: privateValue,
+        context_revision: 2,
+        occurred_at: call.created_at,
+        completeness: "final",
+        fragments: [{ text: privateValue, source: { nested: privateValue } }],
+      },
+    ],
+    results: [
+      {
+        result_id: privateValue,
+        business_ref: privateValue,
+        spoken_summary: privateValue,
+        evidence_urls: [privateValue],
+        revision: 3,
+        context_revision: 2,
+        status: "completed",
+      },
+    ],
+    transcripts: [{ text: privateValue, metadata: { deep: privateValue } }],
+    transcript_availability: "available",
+    usage: {
+      seconds: 60,
+      status: "settled",
+      zone: privateValue,
+      unknown: { privateValue },
+    },
+    unknown: [{ very: { deep: { privateValue } } }],
+  };
+  const dependencies = {
+    write: () => {},
+    fetch: async () => Response.json(record),
+  };
+  for (const format of ["json", "html"]) {
+    const out = join(root, `redacted.${format}`);
+    await runCli(
+      [
+        "audit",
+        "export",
+        "--config",
+        configFile,
+        "--call",
+        "call-id",
+        "--format",
+        format,
+        "--out",
+        out,
+        "--redact",
+      ],
+      dependencies,
+    );
+    const content = readFileSync(out, "utf8");
+    expect(content).not.toContain(privateValue);
+    expect(content).not.toContain("spoken_summary");
+    expect(content).not.toContain("target_id");
+    if (format === "json")
+      expect(JSON.parse(content)).toMatchObject({
+        redacted: true,
+        call: {
+          state: "ended",
+          revision: 4,
+          updated_at: "2026-09-16T12:01:00.000Z",
+        },
+        counts: { events: 1, delegations: 1, results: 1, transcripts: 1 },
+        usage: { seconds: 60, status: "settled" },
+      });
+  }
+  const raw = join(root, "private.json");
+  await runCli(
+    [
+      "audit",
+      "export",
+      "--config",
+      configFile,
+      "--call",
+      "call-id",
+      "--format",
+      "json",
+      "--out",
+      raw,
+    ],
+    dependencies,
+  );
+  expect(JSON.parse(readFileSync(raw, "utf8"))).toEqual(record);
+  await expect(
+    runCli(["status", "--config", configFile, "--redact"], dependencies),
+  ).rejects.toThrow("invalid_arguments");
 });

@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { CallStore } from "@voxdock/core";
 import { RefSchema, CallRequestSchema } from "@voxdock/contracts";
 import { Value } from "@sinclair/typebox/value";
-import { controlRequest, renderAudit } from "./cli-api.js";
+import { controlRequest, renderAudit, redactAudit } from "./cli-api.js";
 import {
   CliError,
   controlToken,
@@ -25,7 +25,7 @@ const help = `VoxDock commands:
   pause
   resume
   reconcile CALL_ID --confirm-ended
-  audit export --call ID --format json|html --out NEW_FILE
+  audit export --call ID --format json|html --out NEW_FILE [--redact]
   cleanup
 All commands except init accept --config FILE (default ./voxdock.config.json).
 Resume, reconcile and cleanup require the service to be stopped.
@@ -38,7 +38,7 @@ function argumentsOf(args: string[]) {
     const arg = args[index]!;
     if (arg.startsWith("--")) {
       const name = arg.slice(2);
-      if (name === "online" || name === "confirm-ended") {
+      if (name === "online" || name === "confirm-ended" || name === "redact") {
         flags.add(name);
         continue;
       }
@@ -107,7 +107,11 @@ export async function runCli(
     !allowed[command] ||
     Object.keys(values).some((key) => !allowed[command]!.includes(key)) ||
     [...flags].some((flag) =>
-      flag === "online" ? command !== "doctor" : command !== "reconcile",
+      flag === "online"
+        ? command !== "doctor"
+        : flag === "redact"
+          ? command !== "audit"
+          : command !== "reconcile",
     )
   )
     throw new CliError("invalid_arguments");
@@ -212,11 +216,12 @@ export async function runCli(
     const record = await request(
       `/v1/calls/${encodeURIComponent(ref(required(values, "call")))}/record`,
     );
+    const exported = flags.has("redact") ? redactAudit(record) : record;
     writeExport(
       required(values, "out"),
       format === "html"
-        ? renderAudit(record)
-        : JSON.stringify(record, null, 2) + "\n",
+        ? renderAudit(exported)
+        : JSON.stringify(exported, null, 2) + "\n",
     );
     output({ exported: true, format });
     return;
