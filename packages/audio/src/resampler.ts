@@ -29,7 +29,8 @@ export class FfmpegResampler extends Duplex {
     this.limit = limit; this.finishTimeout = finishTimeout;
     this.child = (options.spawnProcess ?? ((file, args) => spawn(file, args, { stdio: 'pipe' })))(options.executable ?? 'ffmpeg', [
       '-hide_banner', '-loglevel', 'error', '-nostdin',
-      '-f', 's16le', '-ar', String(options.inputRate), '-ac', '1', '-i', 'pipe:0',
+      // The raw format is known; default probing otherwise buffers over a second of live PCM.
+      '-probesize', '32', '-f', 's16le', '-ar', String(options.inputRate), '-ac', '1', '-i', 'pipe:0',
       '-f', 's16le', '-ar', String(options.outputRate), '-ac', '1', 'pipe:1',
     ]);
     this.child.stdout.on('data', (chunk: Buffer) => {
