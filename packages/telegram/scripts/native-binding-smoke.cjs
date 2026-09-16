@@ -1,4 +1,4 @@
-// Run from a workspace with the exact packages installed. No accounts or network calls.
+// Kept inside the package so pnpm resolves its declared dependencies. No accounts or network calls.
 const assert = require('node:assert/strict');
 const { NTgCalls } = require('ntgcalls');
 const { Api } = require('teleproto');

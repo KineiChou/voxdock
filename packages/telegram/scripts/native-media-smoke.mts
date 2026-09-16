@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { StreamMode, MediaSource, StreamDevice, VideoRotation } from 'ntgcalls';
-import { TelegramNativeBinding } from '../../packages/telegram/src/binding.ts';
+import { TelegramNativeBinding } from '../src/binding.ts';
 // Synthetic parameters exercise the byte ABI only. Never use these as call DH parameters.
 const native = new TelegramNativeBinding();
 await native.createP2pCall(1n);

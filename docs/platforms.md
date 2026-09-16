@@ -34,7 +34,7 @@ The pinned WaCalls browser bridge is a WebRTC DataChannel named `pcm`, using 16 
 
 ## Reproduction
 
-Install exact `ntgcalls@3.0.0-rc03` and `teleproto@1.229.0`, then run `node scripts/platforms/native-smoke.cjs` on Node 24. Run adapter tests with Vitest. `node scripts/platforms/telegram-native-smoke.mts` additionally exercises creation, byte conversion, external 48 kHz mono PCM input and cleanup without any account or call.
+After `pnpm install --frozen-lockfile`, run `node packages/telegram/scripts/native-binding-smoke.cjs` on Node 24. Run adapter tests with Vitest. `pnpm exec tsx packages/telegram/scripts/native-media-smoke.mts` additionally exercises creation, byte conversion, external 48 kHz mono PCM input and cleanup without any account or call. The smoke scripts live inside the Telegram package to resolve its declared dependencies under pnpm's isolated layout.
 
 For WaCalls, checkout the fixed commit and run `go build ./cmd/server`. Linux build: `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/server`. Go 1.26.4 is required by upstream; a recent Go installation can fetch the toolchain automatically. Builds require downloading the pinned `go.mod`/`go.sum` dependencies.
 
