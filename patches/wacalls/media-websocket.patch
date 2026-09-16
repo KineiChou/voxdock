@@ -1,5 +1,5 @@
 diff --git a/cmd/server/broker.go b/cmd/server/broker.go
-index 950b250..473399b 100644
+index 950b250..62ca948 100644
 --- a/cmd/server/broker.go
 +++ b/cmd/server/broker.go
 @@ -17,15 +17,16 @@ const (
@@ -57,6 +57,23 @@ index 950b250..473399b 100644
  	})
  	b.broadcastCallList()
  }
+@@ -193,10 +198,12 @@ func (b *Broker) broadcastCallList() {
+ 	b.broadcast(map[string]any{"type": "call-list", "calls": list})
+ }
+ 
+-func (b *Broker) emitIncoming(sessionID, id, peer string) {
+-	b.broadcast(map[string]any{
+-		"type": "incoming", "sessionId": sessionID, "id": id, "peer": peer, "offeredAt": time.Now().UnixMilli(),
+-	})
++func (b *Broker) emitIncoming(sessionID, id, peer, phone string) {
++	event := map[string]any{"type": "incoming", "sessionId": sessionID, "id": id, "peer": peer, "offeredAt": time.Now().UnixMilli()}
++	if phone != "" {
++		event["peer_phone_jid"] = phone
++	}
++	b.broadcast(event)
+ }
+ 
+ func (b *Broker) emitIncomingClaimed(sessionID, id, owner string) {
 diff --git a/cmd/server/broker_test.go b/cmd/server/broker_test.go
 index 23b2e8a..b0f7e6e 100644
 --- a/cmd/server/broker_test.go
@@ -609,6 +626,132 @@ index 0000000..bf58643
 +		t.Fatal("closed media accepted audio")
 +	}
 +}
+diff --git a/cmd/server/peeridentity.go b/cmd/server/peeridentity.go
+new file mode 100644
+index 0000000..5cab49c
+--- /dev/null
++++ b/cmd/server/peeridentity.go
+@@ -0,0 +1,34 @@
++package main
++
++import (
++	"context"
++	"regexp"
++	"time"
++
++	"go.mau.fi/whatsmeow/types"
++)
++
++type storedLIDLookup interface {
++	GetPNForLID(context.Context, types.JID) (types.JID, error)
++}
++
++var phoneUser = regexp.MustCompile(`^[1-9][0-9]{4,14}$`)
++
++// Only the authenticated account's existing mapping is authoritative here.
++// This does not perform network discovery or infer a phone number from LID digits.
++func storedPeerPhone(ctx context.Context, peer string, lookup storedLIDLookup) string {
++	jid, err := types.ParseJID(peer)
++	if err != nil || jid.Server != types.HiddenUserServer || lookup == nil {
++		return ""
++	}
++	bounded, cancel := context.WithTimeout(ctx, time.Second)
++	defer cancel()
++	if bounded.Err() != nil {
++		return ""
++	}
++	pn, err := lookup.GetPNForLID(bounded, jid.ToNonAD())
++	if err != nil || bounded.Err() != nil || pn.Server != types.DefaultUserServer || !phoneUser.MatchString(pn.User) {
++		return ""
++	}
++	return pn.ToNonAD().String()
++}
+diff --git a/cmd/server/peeridentity_test.go b/cmd/server/peeridentity_test.go
+new file mode 100644
+index 0000000..234f9fd
+--- /dev/null
++++ b/cmd/server/peeridentity_test.go
+@@ -0,0 +1,80 @@
++package main
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"testing"
++	"time"
++
++	"go.mau.fi/whatsmeow/types"
++)
++
++type phoneLookupFunc func(context.Context, types.JID) (types.JID, error)
++
++func (f phoneLookupFunc) GetPNForLID(ctx context.Context, jid types.JID) (types.JID, error) {
++	return f(ctx, jid)
++}
++
++func TestStoredPeerPhoneUsesOnlyBoundedAuthoritativeMapping(t *testing.T) {
++	called := false
++	lookup := phoneLookupFunc(func(ctx context.Context, jid types.JID) (types.JID, error) {
++		called = true
++		deadline, ok := ctx.Deadline()
++		if !ok || time.Until(deadline) > time.Second {
++			t.Fatal("lookup has no short deadline")
++		}
++		if jid.Server != types.HiddenUserServer || jid.User != "987654321" || jid.Device != 0 {
++			t.Fatal("LID mapping key changed")
++		}
++		return types.NewJID("15551234567", types.DefaultUserServer), nil
++	})
++	if got := storedPeerPhone(context.Background(), "987654321:2@lid", lookup); got != "15551234567@s.whatsapp.net" || !called {
++		t.Fatalf("mapping missing: %q", got)
++	}
++	called = false
++	if got := storedPeerPhone(context.Background(), "15551234567@s.whatsapp.net", lookup); got != "" || called {
++		t.Fatal("non-LID triggered lookup")
++	}
++}
++func TestStoredPeerPhoneMissingInvalidAndCanceledFailClosed(t *testing.T) {
++	for _, pn := range []types.JID{{}, types.NewJID("987654321", types.HiddenUserServer), types.NewJID("not-phone", types.DefaultUserServer)} {
++		lookup := phoneLookupFunc(func(context.Context, types.JID) (types.JID, error) { return pn, nil })
++		if got := storedPeerPhone(context.Background(), "987654321@lid", lookup); got != "" {
++			t.Fatal("invalid mapping accepted")
++		}
++	}
++	lookup := phoneLookupFunc(func(context.Context, types.JID) (types.JID, error) {
++		return types.JID{}, errors.New("private database details")
++	})
++	if got := storedPeerPhone(context.Background(), "987654321@lid", lookup); got != "" {
++		t.Fatal("lookup error accepted")
++	}
++	ctx, cancel := context.WithCancel(context.Background())
++	cancel()
++	if got := storedPeerPhone(ctx, "987654321@lid", phoneLookupFunc(func(context.Context, types.JID) (types.JID, error) {
++		t.Fatal("canceled lookup executed")
++		return types.JID{}, nil
++	})); got != "" {
++		t.Fatal("canceled mapping accepted")
++	}
++}
++func TestIncomingEventOmitsUnresolvedPhoneIdentity(t *testing.T) {
++	b := NewBroker()
++	sub := b.subscribe("operator")
++	defer b.unsubscribe(sub)
++	for _, phone := range []string{"", "15551234567@s.whatsapp.net"} {
++		b.emitIncoming("session", "call", "987654321@lid", phone)
++		var event map[string]any
++		if err := json.Unmarshal(<-sub.ch, &event); err != nil {
++			t.Fatal(err)
++		}
++		value, present := event["peer_phone_jid"]
++		if (phone == "" && present) || (phone != "" && value != phone) {
++			t.Fatal("incorrect mapped identity field")
++		}
++		if event["peer"] != "987654321@lid" {
++			t.Fatal("original identity overwritten")
++		}
++	}
++}
 diff --git a/cmd/server/server.go b/cmd/server/server.go
 index f4bfce6..37a37cc 100644
 --- a/cmd/server/server.go
@@ -640,10 +783,22 @@ index f4bfce6..37a37cc 100644
 +	return &server{mediaAuth: auth, broker: broker, sessions: mgr, log: log, staticDir: staticDir}, nil
  }
 diff --git a/cmd/server/session.go b/cmd/server/session.go
-index 38092f3..7159859 100644
+index 38092f3..e08e9c6 100644
 --- a/cmd/server/session.go
 +++ b/cmd/server/session.go
-@@ -65,7 +65,7 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
+@@ -60,12 +60,18 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
+ 			SessionID: s.id, CallID: c.CallID, Direction: "inbound", Peer: c.PeerJid,
+ 			StartedAt: time.Now().UnixMilli(), Status: StatusRinging,
+ 		})
+-		s.mgr.broker.emitIncoming(s.id, c.CallID, c.PeerJid)
++		phone := ""
++		if s.client != nil && s.client.Store != nil {
++			phone = storedPeerPhone(s.mgr.appCtx, c.PeerJid, s.client.Store.LIDs)
++		}
++		if _, active := s.reg.get(c.CallID); active {
++			s.mgr.broker.emitIncoming(s.id, c.CallID, c.PeerJid, phone)
++		}
+ 	}
  	cm.OnStateChange = func(c *call.CallInfo) {
  		if c.IsEnded() {
  			s.removeCall(c.CallID)
@@ -652,7 +807,7 @@ index 38092f3..7159859 100644
  			return
  		}
  		dir := "outbound"
-@@ -85,15 +85,9 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
+@@ -85,15 +91,9 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
  	}
  	cm.OnEnded = func(c *call.CallInfo) {
  		s.removeCall(c.CallID)
@@ -670,7 +825,7 @@ index 38092f3..7159859 100644
  }
  
  func (s *Session) startOutgoing(ctx context.Context, peer types.JID, isVideo bool) (string, error) {
-@@ -228,17 +222,6 @@ func (s *Session) info() SessionInfo {
+@@ -228,17 +228,6 @@ func (s *Session) info() SessionInfo {
  	return SessionInfo{ID: s.id, Name: s.name, JID: jid, State: a.State, Paired: a.Paired || jid != ""}
  }
  
