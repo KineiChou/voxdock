@@ -161,3 +161,15 @@ test.each(['ended', 'not-ready'] as const)('skips the warning when %s without st
     expect(f.end).toHaveBeenCalledOnce();
   } finally { await f.close(); vi.useRealTimers(); }
 });
+
+test('audio overflow records its fixed boundary reason before platform cleanup', async () => {
+  const f = await fixture();
+  try {
+    const call = request(f.store);
+    await f.runtime.onCallCreated(call); await f.flush();
+    f.emit({ type: 'audio', pcm: Buffer.alloc(48001) });
+    await f.flush();
+    expect(f.end).toHaveBeenCalledOnce();
+    expect(f.store.getCall(call.call_id)).toMatchObject({ state: 'ended', reason: 'audio_output_overflow' });
+  } finally { await f.close(); }
+});

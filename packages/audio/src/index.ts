@@ -55,7 +55,10 @@ export class PcmPacer {
     if (!Number.isFinite(nowMs)) throw new Error('Invalid clock');
     if (this.stopped || (this.due !== undefined && nowMs < this.due)) return false;
     this.send(this.queue.take(true)!);
-    this.due = nowMs + this.queue.durationMs;
+    // Ordinary timer lateness must not change the nominal sample clock.
+    // After a missed slot, restart from now instead of sending catch-up frames.
+    const next = (this.due ?? nowMs) + this.queue.durationMs;
+    this.due = next > nowMs ? next : nowMs + this.queue.durationMs;
     return true;
   }
   stop(): void { this.stopped = true; this.queue.clear(); }
