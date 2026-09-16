@@ -26,6 +26,7 @@ it("requires identified revisioned delegation results", () => {
   expect(
     Value.Check(DelegationResultSchema, {
       result_id: "r1",
+      context_revision: 1,
       delegation_id: "d1",
       call_id: "c1",
       revision: 1,
