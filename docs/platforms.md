@@ -10,7 +10,7 @@ Evidence date: 2026-09-16. No accounts were authenticated and no calls were made
 | teleproto | npm `1.229.0`, source `9b0ebd11151af3e362842b826e704e97ab398fa5` | Public phone request/accept/confirm/discard/signaling exports verified on Node 24 |
 | WaCalls | `edeb31f0427aba896639db503153b777a405eccf` | Go 1.26.4 build succeeds for macOS arm64 and Linux amd64, CGO disabled for Linux |
 
-NTgCalls has a published Linux x64 optional native package. Linux native loading still requires CI verification; a cross-compiled Go executable is not a Linux runtime test. NTgCalls is a prerelease dependency and no native call or PCM operation has been validated end to end.
+NTgCalls native loading, byte ABI, external PCM input and cleanup also pass on Linux x64 Node 24, both on the CI host and inside the Debian bridge image. The WaCalls image starts with an empty account store in Linux CI. NTgCalls remains a prerelease dependency; these account-free checks do not establish real call negotiation or handset audio. See [acceptance evidence](acceptance.md).
 
 ### MTProto selection
 
@@ -26,19 +26,19 @@ WhatsApp control uses the pinned upstream's actual HTTP routes, fixed session/cl
 
 The SSE decoder handles chunked UTF-8, CRLF, comments and multiline data with bounded events. Call events require matching session and provider call identity. Upstream `ringing` is written immediately by the start-call HTTP handler, so it maps to `dialing`; it is not evidence that the remote phone is ringing. SSE contains no durable cursor and its broker drops events for slow subscribers. A disconnected stream must trigger reconciliation or uncertain status, never automatic redial. Call-list/auth/QR events are ignored by the narrow call parser; raw events must not be logged.
 
-The control client is not a complete call adapter: callers still own durable reservation, global single-call admission, state ordering, reconciliation, bounded timeouts, inbound approval and cleanup. Successful hangup HTTP response alone is not proof of a final platform event.
+The control client is a low-level transport. The [shared runtime](runtime.md) owns durable reservation, global single-call admission, state ordering, reconciliation, bounded timeouts, inbound approval and cleanup. Successful hangup HTTP response alone is not proof of a final platform event.
 
 ## Media boundary
 
-The pinned WaCalls browser bridge is a WebRTC DataChannel named `pcm`, using 16 kHz mono PCM16LE; internal callbacks use float32. There is no upstream PCM WebSocket route. A future internal Go media adapter must bind authenticated media to an existing call/session and reuse `FeedCapturedPCM` plus the existing output callback. No protocol implementation has been copied into this repository.
+The pinned upstream WaCalls browser bridge is a WebRTC DataChannel named `pcm`, using 16 kHz mono PCM16LE; internal callbacks use float32. VoxDock's [Go patch](wacalls-media.md) adds an authenticated, call/session-bound PCM WebSocket using `FeedCapturedPCM` and the existing output callback. This route is supplied by the local patch, not unmodified upstream. The patch also adds explicit termination evidence and stored identity mapping; it preserves the upstream call protocol.
 
 ## Reproduction
 
-After `pnpm install --frozen-lockfile`, run `node packages/telegram/scripts/native-binding-smoke.cjs` on Node 24. Run adapter tests with Vitest. `pnpm exec tsx packages/telegram/scripts/native-media-smoke.mts` additionally exercises creation, byte conversion, external 48 kHz mono PCM input and cleanup without any account or call. The smoke scripts live inside the Telegram package to resolve its declared dependencies under pnpm's isolated layout.
+After `pnpm install --frozen-lockfile`, run `node packages/telegram/scripts/native-binding-smoke.cjs` on Node 24. Run adapter tests with Vitest. `node --import tsx packages/telegram/scripts/native-media-smoke.mts` additionally exercises creation, byte conversion, external 48 kHz mono PCM input and cleanup without any account or call. The smoke scripts live inside the Telegram package to resolve its declared dependencies under pnpm's isolated layout.
 
 For WaCalls, checkout the fixed commit and run `go build ./cmd/server`. Linux build: `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/server`. Go 1.26.4 is required by upstream; a recent Go installation can fetch the toolchain automatically. Builds require downloading the pinned `go.mod`/`go.sum` dependencies.
 
-Remaining runtime evidence: login/session persistence, target resolution, private call negotiation, handset ringing/answer/rejection, external PCM formats and timing, duplex audio, interruption, timeout cleanup, crash recovery and Linux process operation. These require a separately authorized account/device test, not mock assertions.
+Remaining account/device evidence: login/session persistence, target resolution, private call negotiation, handset ringing/answer/rejection, actual media timing and duplex audio, interruption, and cleanup/crash recovery with real platform state. Linux process and synthetic/native PCM checks already pass; they do not substitute for these real-world scenarios.
 
 ## Pinned native byte ABI defect
 
@@ -50,6 +50,6 @@ The rc03 generated TypeScript declarations label byte inputs as `Buffer`, but th
 
 `TelegramDriver` accepts an authorized client, configured account/target IDs and state/audio/incoming callbacks. It exposes `dial(targetId, signal)`, `accept(ref, signal)`, `reject(ref)`, `end(ref)`, `writeAudio(ref, pcm)` and `close()`. Caller must reserve durable global capacity before dial/accept. Native audio is 48 kHz mono PCM16LE in 10 ms (960-byte) frames; the host supplies pacing and bounded queues. Platform `connected` and `onAudioReady` are separate. Incoming offers only produce callbacks; the manager decides admission. Unknown, foreign or video callers cannot be accepted. Platform uncertainty preserves the active reservation, and terminal discard evidence is required before admitting another call.
 
-Actual tests: 13 Vitest fixture/identity/transport tests passed; strict TypeScript checks passed. Pinned WaCalls `go test ./cmd/server` passed. Native account-free create/external input/stop and byte ABI smoke passed on macOS arm64 Node 24.21.0. No platform login, actual negotiation or audio quality claim follows from these results.
+Fixture/identity/transport tests and strict TypeScript checks pass. The pinned WaCalls patch also passes server/core tests and race checks. Native account-free create/external input/stop and byte ABI smoke pass on macOS arm64 and Linux x64 Node 24.21.0. Exact runs are linked in [acceptance](acceptance.md); no platform login, actual negotiation or audio quality claim follows from them.
 
 Failure cleanup attempts one correlated platform discard when a provider reference exists; native cleanup failure does not suppress that attempt. The reservation clears only with terminal platform evidence and successful native cleanup. Updates remain subscribed during explicit close. Tests cover stale same-target updates arriving before the dial response and failed native connection cleanup.
