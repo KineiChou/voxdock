@@ -16,7 +16,7 @@ const config = () => parseConfig({
 });
 const facts: BackendContext = { context_revision: 50, obsolete: false, purpose: 'Review completed work', facts: ['Tests passed'], language: 'en' };
 function request(store: CallStore) { return store.createCall('client', 'one', { target_id: 'self', correlation_ref: 'task:one', context_ref: 'task:one', expires_at: new Date(Date.now() + 200000).toISOString() }, { enabled: true, allowedTargets: new Set(['self']), maxTtlSeconds: 300 }).call; }
-async function fixture(options: { connect?: boolean; obsolete?: boolean } = {}) {
+async function fixture(options: { connect?: boolean; obsolete?: boolean; maxSeconds?: number; liveReady?: boolean } = {}) {
   const store = new CallStore(':memory:');
   let callbacks!: VoiceEvents;
   let emit!: (event: LiveEvent) => void;
@@ -30,20 +30,23 @@ async function fixture(options: { connect?: boolean; obsolete?: boolean } = {}) 
   const accept = vi.fn(async (ref: string) => { callbacks.state(ref, 'connected'); callbacks.audioReady(ref); return ref; });
   const reject = vi.fn(async () => {});
   const dial = vi.fn(async () => { if (options.connect !== false) { callbacks.state('provider', 'connected'); callbacks.audioReady('provider'); } return 'provider'; });
-  const runtime = await createRuntime({ config: config(), store }, {
+  const settings = config();
+  settings.calling.max_call_seconds = options.maxSeconds ?? 2;
+  const instruction = vi.fn((text: string) => { output.push({ kind: 'instructions', text }); return 'append'; });
+  const runtime = await createRuntime({ config: settings, store }, {
     backend: { context, delegate, deliverEvent }, environment: () => '123', resampler: () => new PassThrough(),
     voice: async (_target, _peer, events) => { callbacks = events; return { rate: 48000, frameMs: 10, dial, accept, reject, end, writeAudio: async () => {}, close: async () => {} }; },
     live: (_settings, listener) => { emit = listener; return {
-      start() { liveStarts++; emit({ type: 'ready', sessionId: 'session' }); },
+      start() { liveStarts++; if (options.liveReady !== false) emit({ type: 'ready', sessionId: 'session' }); },
       appendAudio(pcm) { audio.push(pcm); },
       commentary(text, delegationId) { output.push({ kind: 'commentary', text, ...(delegationId === undefined ? {} : { delegationId }) }); return 'append'; },
       thinking(text) { output.push({ kind: 'thinking', text }); return 'context'; },
-      instructions(text) { output.push({ kind: 'instructions', text }); return 'greet'; },
+      instructions: instruction,
       close() { emit({ type: 'closed', finalization: 'complete', reason: 'closed', seconds: 1 }); },
     }; },
   });
   const flush = () => new Promise(resolve => setTimeout(resolve, 20));
-  return { store, runtime, callbacks, get emit() { return emit; }, output, audio, context, delegate, deliverEvent, end, accept, reject, dial, flush, liveStarts: () => liveStarts,
+  return { store, runtime, callbacks, get emit() { return emit; }, output, audio, instruction, context, delegate, deliverEvent, end, accept, reject, dial, flush, liveStarts: () => liveStarts,
     async close() { await runtime.close(); store.close(); } };
 }
 test('coordinator dials after context, greets once, delegates with transcript revision, speaks matching result and settles', async () => {
@@ -116,4 +119,45 @@ test('obsolete preflight never dials, and worker failure retains uncertainty', a
     expect(f.runtime.readyChannels.has('telegram')).toBe(false);
     expect(f.store.getCall(call.call_id).state).toBe('uncertain'); expect(f.liveStarts()).toBe(0);
   } finally { await f.close(); }
+});
+
+
+test.each([2, 80])('warns once at the duration boundary and retains the hard deadline (%i seconds)', async maxSeconds => {
+  vi.useFakeTimers();
+  const f = await fixture({ maxSeconds });
+  try {
+    const call = request(f.store);
+    await f.runtime.onCallCreated(call);
+    const warningAt = (maxSeconds - Math.min(30, maxSeconds / 2)) * 1000;
+    await vi.advanceTimersByTimeAsync(warningAt - 1);
+    expect(f.instruction).toHaveBeenCalledTimes(1);
+    // A failed warning append must remain best-effort, without retry or an unhandled throw.
+    if (maxSeconds === 2) f.instruction.mockImplementationOnce(() => { throw new Error('append rejected'); });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(f.instruction).toHaveBeenCalledTimes(2);
+    expect(f.instruction.mock.calls[1]![0]).toContain('language of the current conversation context');
+    f.callbacks.state('provider', 'connected');
+    await vi.advanceTimersByTimeAsync(maxSeconds * 1000 - warningAt - 1);
+    expect(f.end).not.toHaveBeenCalled();
+    expect(f.instruction).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(f.end).toHaveBeenCalledOnce();
+    expect(f.store.getCall(call.call_id)).toMatchObject({ state: 'ended', reason: 'duration_limit' });
+  } finally { await f.close(); vi.useRealTimers(); }
+});
+
+test.each(['ended', 'not-ready'] as const)('skips the warning when %s without starting another Live session', async mode => {
+  vi.useFakeTimers();
+  const f = await fixture({ liveReady: mode !== 'not-ready' });
+  try {
+    const call = request(f.store);
+    await f.runtime.onCallCreated(call);
+    await vi.advanceTimersByTimeAsync(500);
+    if (mode === 'ended') await f.runtime.onEnd(f.store.getCall(call.call_id));
+    const count = f.instruction.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(f.instruction).toHaveBeenCalledTimes(count);
+    expect(f.liveStarts()).toBe(1);
+    expect(f.end).toHaveBeenCalledOnce();
+  } finally { await f.close(); vi.useRealTimers(); }
 });
