@@ -11,7 +11,7 @@ A self-hosted voice bridge for **Telegram**, **WhatsApp**, and **GPT-Live-1**. C
 - One configured operator, one business backend, one active call.
 - Fixed call targets, idempotent commands, bounded duration and no automatic redial.
 - Continuous audio through GPT-Live-1 with client-managed delegation.
-- SQLite call/event records, backend receipts and inspectable audit exports.
+- SQLite call/event records, backend receipts and JSON/HTML audit exports with optional redacted summaries.
 
 Your backend owns task execution, permissions, project routing and long-term memory. VoxDock carries the conversation and its evidence.
 
@@ -23,7 +23,7 @@ Your backend owns task execution, permissions, project routing and long-term mem
 | Telegram | MTProto/NTgCalls driver and Live runtime path | Fixtures and account-free native checks; handset calls unverified |
 | GPT-Live-1 | Primary WebSocket, PCM, transcripts, client delegation and finite close | Injected transport tests; account access and real sessions unverified |
 | WhatsApp | WaCalls control/media, stored identity mapping and shared Live runtime | Go builds, loopback PCM and adapter tests; real calls unverified |
-| Packaging | Source install and local Docker/Compose definitions | Source CLI runs on Linux; container evidence is tracked in acceptance |
+| Packaging | Source install and local Docker/Compose definitions | Both images build and run in account-free Linux CI; operator deployment remains unverified |
 
 See [acceptance evidence and remaining gates](docs/acceptance.md).
 
