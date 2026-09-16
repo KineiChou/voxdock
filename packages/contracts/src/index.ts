@@ -126,6 +126,7 @@ export const DelegationResultSchema = Type.Object(
     result_id: RefSchema,
     delegation_id: RefSchema,
     call_id: RefSchema,
+    context_revision: Type.Integer({ minimum: 1 }),
     revision: Type.Integer({ minimum: 1 }),
     status: Type.Union(
       (

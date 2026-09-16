@@ -456,10 +456,12 @@ export class CallStore {
           };
         }
         const delegation = this.db
-          .prepare("SELECT call_id FROM delegations WHERE id=?")
-          .get(result.delegation_id) as { call_id: string } | undefined;
+          .prepare("SELECT call_id,revision FROM delegations WHERE id=?")
+          .get(result.delegation_id) as { call_id: string; revision: number } | undefined;
         if (!delegation || delegation.call_id !== result.call_id)
           throw new DomainError("delegation_not_found", 404);
+        if (result.context_revision > delegation.revision)
+          throw new DomainError("unknown_context_revision", 409);
         const latest = this.db
           .prepare(
             "SELECT revision FROM results WHERE delegation_id=? ORDER BY revision DESC LIMIT 1",
@@ -469,7 +471,7 @@ export class CallStore {
           throw new DomainError("result_revision_conflict", 409);
         const call = this.getCall(result.call_id);
         const playback_status =
-          call.state === "connected" && call.live_ready
+          call.state === "connected" && call.live_ready && result.context_revision === delegation.revision
             ? ("eligible" as const)
             : ("not_played" as const);
         this.db

@@ -153,6 +153,7 @@ describe("delegation revisions", () => {
     });
     const result: DelegationResult = {
       result_id: "r1",
+      context_revision: 2,
       delegation_id: "d1",
       call_id: call.call_id,
       revision: 1,
@@ -313,6 +314,7 @@ describe("audit privacy and durable pause", () => {
       call_id: call.call_id,
       delegation_id: "d1",
       result_id: "r1",
+      context_revision: 1,
       revision: 1,
       status: "completed",
       spoken_summary: "private reply",
@@ -331,4 +333,15 @@ describe("audit privacy and durable pause", () => {
     expect(store.recordDelegation(delegation).replayed).toBe(true);
     expect(store.recordResult(result).replayed).toBe(true);
   });
+});
+
+it("does not speak a late result for an earlier user context", () => {
+  const call = connected();
+  const delegation: Delegation = { call_id: call.call_id, delegation_id: "d-correction", principal_ref: "owner", context_revision: 1, occurred_at: now.toISOString(), fragments: [], completeness: "partial" };
+  store.recordDelegation(delegation);
+  store.recordDelegation({ ...delegation, context_revision: 2 });
+  const result: DelegationResult = { call_id: call.call_id, delegation_id: delegation.delegation_id, result_id: "old-context", context_revision: 1, revision: 1, status: "completed", spoken_summary: "Old request result." };
+  expect(store.recordResult(result).playback_status).toBe("not_played");
+  expect(store.recordResult({ ...result, result_id: "current-context", context_revision: 2, revision: 2 }).playback_status).toBe("eligible");
+  expect(() => store.recordResult({ ...result, result_id: "future-context", context_revision: 3, revision: 3 })).toThrow("unknown_context_revision");
 });

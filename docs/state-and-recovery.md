@@ -26,3 +26,14 @@ Tests use temporary databases and an injected clock, reopen the store, compete t
 - `prune({ metadataBefore, transcriptsBefore })`, `setPaused(boolean)`, `isPaused(defaultPaused)`. Pause settings survive restart; the controller must apply the pause gate to fresh calls.
 
 Domain failures expose a stable `DomainError.code` and HTTP `statusCode`; errors do not include private payload values.
+
+## Context and result revisions
+
+A result carries both `context_revision` (the user context it answers) and
+`revision` (the backend update sequence). These counters are independent. A late
+result for an earlier context is recorded as not played; an unknown future context
+is rejected. The runtime rechecks context immediately before submitting speech.
+
+Maintainer review found that checking only call identity and readiness could speak
+an obsolete result after a user correction. The separate context reference and a
+regression test correct that model before integration.
