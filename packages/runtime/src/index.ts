@@ -19,8 +19,8 @@ interface Active {
   context: BackendContext; revision: number; seq: number; fragments: TranscriptFragment[];
   delegations: Map<string, { offset: number; timer?: ReturnType<typeof setTimeout> }>;
   results: Set<string>; live?: RuntimeLive; sessionId?: string; audio?: CallAudio;
-  mediaReady: boolean; startingLive: boolean; greeted: boolean; stopping: boolean;
-  ringTimer?: ReturnType<typeof setTimeout>; durationTimer?: ReturnType<typeof setTimeout>;
+  mediaReady: boolean; startingLive: boolean; greetingStarted: boolean; greeted: boolean; stopping: boolean;
+  ringTimer?: ReturnType<typeof setTimeout>; durationTimer?: ReturnType<typeof setTimeout>; warningTimer?: ReturnType<typeof setTimeout>;
   finalTimer?: ReturnType<typeof setTimeout>; liveFinalized: boolean;
   finalized?: Promise<void>; resolveFinalized?: () => void;
   transcriptIds: Set<string>;
@@ -63,7 +63,7 @@ export async function createRuntime(options: { config: BridgeConfig; store: Call
   }
   function clearMedia(a: Active): void {
     a.audio?.close(); delete a.audio;
-    clearTimeout(a.ringTimer); clearTimeout(a.durationTimer);
+    clearTimeout(a.ringTimer); clearTimeout(a.durationTimer); clearTimeout(a.warningTimer);
     for (const item of a.delegations.values()) clearTimeout(item.timer);
     a.controller.abort();
   }
@@ -102,17 +102,18 @@ export async function createRuntime(options: { config: BridgeConfig; store: Call
     } catch { await stop(a, 'live_start_failed'); }
   }
   async function greet(a: Active): Promise<void> {
-    if (!current(a) || a.stopping || a.greeted || !a.live || !a.providerRef) return;
-    a.greeted = true; // Attempt at most once; an unknown append outcome is never replayed.
+    if (!current(a) || a.stopping || a.greetingStarted || !a.live || !a.providerRef) return;
+    a.greetingStarted = true; // Attempt at most once; an unknown append outcome is never replayed.
     try {
       const context = await backend!.context(store.getCall(a.callId), a.route.target.principal_ref, 'before_greeting');
       if (!current(a) || a.stopping || store.getCall(a.callId).state !== 'connected') return;
       a.context = context;
-      if (context.obsolete) { a.live.instructions('Identify yourself as an AI assistant and say the notification is no longer current. Do not report old task details.'); return; }
+      if (context.obsolete) { a.live.instructions('Identify yourself as an AI assistant and say the notification is no longer current. Do not report old task details.'); a.greeted = true; return; }
       const facts = JSON.stringify({ purpose: context.purpose, facts: context.facts, language: context.language });
       if (Buffer.byteLength(facts) > 8000) throw new Error('Context exceeds bounded spoken briefing');
       for (const part of chunks(facts)) a.live.thinking(`Business context data: ${part}`);
       a.live.instructions('Immediately greet without waiting for the caller. Introduce yourself as an AI assistant in the language supplied with the context, briefly explain the purpose and verified facts, then pause and listen.');
+      a.greeted = true;
     } catch { await stop(a, 'opening_context_failed'); }
   }
   function transcript(a: Active, event: Extract<LiveEvent, { type: 'transcript' }>): void {
@@ -185,7 +186,18 @@ export async function createRuntime(options: { config: BridgeConfig; store: Call
           safeTransition(a, state, ref ? { provider_call_ref: ref } : {});
           if (state === 'connected') {
             clearTimeout(a.ringTimer);
-            a.durationTimer ??= setTimeout(() => { void stop(a, 'duration_limit'); }, config.calling.max_call_seconds * 1000);
+            if (!a.durationTimer && !a.stopping) {
+              const durationMs = config.calling.max_call_seconds * 1000;
+              a.durationTimer = setTimeout(() => { void stop(a, 'duration_limit'); }, durationMs);
+              a.warningTimer = setTimeout(() => {
+                if (!current(a) || a.stopping || !a.greeted || !a.live) return;
+                const call = store.getCall(a.callId);
+                if (call.state !== 'connected' || !call.live_ready) return;
+                try {
+                  a.live.instructions('Briefly tell the caller, in the language of the current conversation context, that this call will end soon because it is approaching its maximum duration.');
+                } catch { /* A best-effort warning never changes the hard deadline or retries an unknown append. */ }
+              }, durationMs - Math.min(30_000, durationMs / 2));
+            }
             void beginLive(a);
           } else if (state === 'uncertain') void stop(a, 'platform_outcome_unknown', true);
         }
@@ -234,7 +246,7 @@ export async function createRuntime(options: { config: BridgeConfig; store: Call
     }
     if (active || closing) return;
     const a: Active = { callId: call.call_id, route, controller: new AbortController(), context, revision: 1, seq: 0,
-      fragments: [], transcriptIds: new Set(), delegations: new Map(), results: new Set(), mediaReady: false, startingLive: false, greeted: false, stopping: false, liveFinalized: false,
+      fragments: [], transcriptIds: new Set(), delegations: new Map(), results: new Set(), mediaReady: false, startingLive: false, greetingStarted: false, greeted: false, stopping: false, liveFinalized: false,
       ...(incomingRef ? { providerRef: incomingRef } : {}), };
     // Persist dispatch before the platform side effect; persistence failure must prevent dialing.
     store.transition(a.callId, incomingRef ? 'ringing' : 'dialing', incomingRef ? { provider_call_ref: incomingRef } : {});
