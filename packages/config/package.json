@@ -1,0 +1,11 @@
+{
+  "name": "@voxdock/config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@voxdock/contracts": "workspace:*",
+    "@sinclair/typebox": "0.34.41"
+  }
+}
