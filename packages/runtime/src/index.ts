@@ -216,7 +216,7 @@ export async function createRuntime(options: { config: BridgeConfig; store: Call
       const created = store.createCall('platform', `incoming:${target.channel}:${ref}`, { target_id: target.id,
         context_ref: `inbound:${target.id}`, correlation_ref: `incoming:${ref}`,
         expires_at: new Date(Date.now() + config.calling.max_request_ttl_seconds * 1000).toISOString(),
-      }, { enabled: true, allowedTargets: new Set([target.id]), maxTtlSeconds: config.calling.max_request_ttl_seconds, direction: 'inbound' });
+      }, { enabled: true, allowedTargets: new Set([target.id]), maxTtlSeconds: config.calling.max_request_ttl_seconds, direction: 'inbound', channel: target.channel });
       if (created.replayed) return;
       await start(created.call, ref);
     } catch { await route.voice.reject(ref).catch(() => {}); }

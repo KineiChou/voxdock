@@ -10,6 +10,7 @@ COPY . .
 RUN pnpm install --frozen-lockfile \
  && pnpm typecheck \
  && pnpm schemas \
+ && pnpm build \
  && mkdir -p /app/provenance \
  && node --version > /app/provenance/node.txt \
  && pnpm --version > /app/provenance/pnpm.txt \

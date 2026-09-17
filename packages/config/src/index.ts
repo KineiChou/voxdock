@@ -59,6 +59,14 @@ export const BridgeConfigSchema = Type.Object(
       { control_token_file: Type.Optional(path) },
       { ...object, default: {} },
     ),
+    console: Type.Object(
+      {
+        enabled: Type.Boolean({ default: false }),
+        public_origin: Type.Optional(Type.String({ minLength: 1, maxLength: 2048 })),
+        password_hash_file: Type.Optional(path),
+      },
+      { ...object, default: {} },
+    ),
     calling: Type.Object(
       {
         enabled: Type.Boolean({ default: false }),
@@ -192,6 +200,25 @@ export function parseConfig(input: unknown): BridgeConfig {
     );
   }
   const config = value;
+  if (config.console.enabled && (!config.console.public_origin || !config.console.password_hash_file)) {
+    throw new ConfigError("Console requires a public origin and administrator password hash reference");
+  }
+  if (config.console.public_origin) {
+    let origin: URL;
+    try {
+      origin = new URL(config.console.public_origin);
+    } catch {
+      throw new ConfigError("Invalid console origin");
+    }
+    const local = ["localhost", "127.0.0.1", "[::1]"].includes(origin.hostname);
+    if (
+      origin.origin !== config.console.public_origin ||
+      origin.username || origin.password ||
+      !(origin.protocol === "https:" || (origin.protocol === "http:" && local))
+    ) {
+      throw new ConfigError("Console origin must be an HTTPS origin, or HTTP on loopback for local development");
+    }
+  }
   const ids = new Set<string>();
   const channels = new Set<string>();
   for (const target of config.targets) {

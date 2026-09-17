@@ -10,7 +10,9 @@ import {
   initDirectory,
   loadConfig,
   writeExport,
+  readPrivateText,
 } from "./cli-files.js";
+import { hashConsolePassword } from "./console-password.js";
 import { doctor } from "./cli-doctor.js";
 import { acquireProcessLock } from "./cli-lock.js";
 import { startService, type RuntimeFactory } from "./cli-service.js";
@@ -20,15 +22,21 @@ const help = `VoxDock commands:
   serve
   status [CALL_ID]
   targets
+  overview [--days 1|7|30]
+  calls [--limit N --cursor CURSOR --channel CHANNEL --direction DIRECTION --state STATE --from UTC_ISO --to UTC_ISO]
+  connections
+  settings
+  console password --password-file PRIVATE_FILE --out NEW_HASH_FILE
   call --target ID --context-ref REF --correlation-ref REF --key KEY --expires-at UTC_ISO
   end CALL_ID
   pause
-  resume
+  resume [--online]
   reconcile CALL_ID --confirm-ended
   audit export --call ID --format json|html --out NEW_FILE [--redact]
   cleanup
-All commands except init accept --config FILE (default ./voxdock.config.json).
-Resume, reconcile and cleanup require the service to be stopped.
+All commands except init and console password accept --config FILE (default ./voxdock.config.json).
+Offline resume, reconcile and cleanup require the service to be stopped.
+Console password writes a new private hash file; configure its reference and restart to apply it.
 `;
 function argumentsOf(args: string[]) {
   const values: Record<string, string> = {};
@@ -88,6 +96,11 @@ export async function runCli(
     serve: ["config"],
     status: ["config"],
     targets: ["config"],
+    overview: ["config", "days"],
+    calls: ["config", "limit", "cursor", "channel", "direction", "state", "from", "to"],
+    connections: ["config"],
+    settings: ["config"],
+    console: ["password-file", "out"],
     call: [
       "config",
       "target",
@@ -108,7 +121,7 @@ export async function runCli(
     Object.keys(values).some((key) => !allowed[command]!.includes(key)) ||
     [...flags].some((flag) =>
       flag === "online"
-        ? command !== "doctor"
+        ? command !== "doctor" && command !== "resume"
         : flag === "redact"
           ? command !== "audit"
           : command !== "reconcile",
@@ -119,7 +132,8 @@ export async function runCli(
     command === "init" ||
     command === "end" ||
     command === "reconcile" ||
-    command === "audit"
+    command === "audit" ||
+    command === "console"
       ? 2
       : 1;
   if (positionals.length > expected + (command === "status" ? 1 : 0))
@@ -132,6 +146,15 @@ export async function runCli(
         calling_enabled: false,
       }),
     );
+    return;
+  }
+  if (command === "console") {
+    if (positionals[1] !== "password") throw new CliError("invalid_arguments");
+    const password = readPrivateText(required(values, "password-file"));
+    if (password.length < 12 || password.length > 256) throw new CliError("invalid_console_password_length");
+    const digest = await hashConsolePassword(password);
+    writeExport(required(values, "out"), digest + "\n");
+    write(JSON.stringify({ password_hash_written: true }));
     return;
   }
   const filename = values.config ?? "./voxdock.config.json";
@@ -180,6 +203,11 @@ export async function runCli(
     output(await request("/v1/targets"));
     return;
   }
+  if (["overview", "calls", "connections", "settings"].includes(command)) {
+    const query = new URLSearchParams(Object.entries(values).filter(([key]) => key !== "config"));
+    output(await request(`/v1/console/${command}${query.size ? `?${query}` : ""}`));
+    return;
+  }
   if (command === "call") {
     const body = {
       target_id: required(values, "target"),
@@ -206,6 +234,10 @@ export async function runCli(
   }
   if (command === "pause") {
     output(await request("/v1/control/pause", { method: "POST" }));
+    return;
+  }
+  if (command === "resume" && flags.has("online")) {
+    output(await request("/v1/console/control/resume", { method: "POST" }));
     return;
   }
   if (command === "audit") {
