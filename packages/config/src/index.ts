@@ -241,17 +241,15 @@ export function parseConfig(input: unknown): BridgeConfig {
         "Targets must reference the configured channel account",
       );
   }
+  // Account management may leave no active target; runtime admission enforces readiness.
   if (
     config.calling.enabled &&
     (!config.security.control_token_file ||
       !config.live.api_key_file ||
-      !config.backend ||
-      !config.targets.some(
-        (target) => target.enabled && config.channels[target.channel].enabled,
-      ))
+      !config.backend)
   ) {
     throw new ConfigError(
-      "Calling requires a control token reference, Live key reference, backend and enabled target",
+      "Calling requires a control token reference, Live key reference and backend",
     );
   }
   if (!/^([^:]+|\[[0-9a-fA-F:]+\]):\d+$/.test(config.service.listen))

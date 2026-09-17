@@ -8,7 +8,7 @@ Use `pnpm voxdock` from the source workspace. `--config FILE` defaults to `./vox
 
 `pnpm voxdock doctor --config ./instance/voxdock.config.json` validates local configuration, Node 24, the control token, enabled credential file access and permissions, configured target environment values, and Telegram's FFmpeg executable. It never connects to a platform or paid API. Disabled platforms require no credentials. Native and Live readiness remain unverified until the adapters actually report readiness. Add `--online` to also query the running control API; this is an explicit network request.
 
-Account pairing and fixed target binding must be completed using the adapter's supported account workflow before enabling calling. This CLI does not provide a pairing command. Prepare the enabled platform and backend credentials, then explicitly set `calling.enabled` to true when ready.
+Use the console or the shared `connection` CLI to pair an account and bind its receiving target; see [connection management](connection-management.md). Prepare the platform and backend credentials, then explicitly set `calling.enabled` to true for initial use. This saved preference may stay true while a channel or target is removed. Actual calls still require an enabled, bound target and a ready adapter; an unconfigured service remains not ready until setup is complete.
 
 ## Run and control
 

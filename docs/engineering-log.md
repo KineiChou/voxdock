@@ -1,5 +1,15 @@
 # Engineering record
 
+## Unlinking the last active channel, 2026-09-17
+
+A deployed operator received `invalid_configuration` immediately after confirming WhatsApp unlink. With global calling enabled and WhatsApp as the only channel, unlink correctly disabled the channel and target, but configuration validation rejected the resulting lack of an enabled target before any logout was sent. The old unlink fixtures and synthetic browser preview left global calling disabled, so their passing results did not cover this production state. The account and committed configuration remained unchanged.
+
+The enabled-target requirement belonged to call readiness, not stored configuration validity. Keep the global calling preference while allowing an unconfigured state; retain control-token, Live-key and backend requirements. Runtime construction, HTTP admission and console resume continue to require an enabled target and ready channel. No special case or automatic global toggle was added to unlink or pairing.
+
+The original failure was reproduced by changing unlink fixtures to enabled calling. Regression coverage now includes durable unlink under that setting, an unavailable interval that rejects calls/resume, reauthorization without automatically trusting the old target, and restoration only after explicit candidate confirmation. Real-runtime checks cover disabled channels, disabled targets and no binding, proving no voice factory, Live session or context request starts. Real platform logout and handset verification remain separate acceptance work.
+
+Typechecking, all 222 account-free tests and the real CLI/service smoke passed. An independent read-only review confirmed the HTTP, runtime and console admission guards remain in place.
+
 ## WhatsApp account unlink and fresh setup, 2026-09-17
 
 The Configure WhatsApp dialog now includes a secondary Unlink account action with an inline confirmation. It signs out only the server device, keeps call history and returns to QR setup. Existing target identifiers and phone references remain disabled until the operator verifies and confirms a receiving account again. The CLI and authenticated API call the same backend operation; ordinary Disconnect still retains login credentials.

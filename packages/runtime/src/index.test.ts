@@ -16,6 +16,26 @@ const config = () => parseConfig({
 });
 const facts: BackendContext = { context_revision: 50, obsolete: false, purpose: 'Review completed work', facts: ['Tests passed'], language: 'en' };
 function request(store: CallStore, key = 'one') { return store.createCall('client', key, { target_id: 'self', correlation_ref: `task:${key}`, context_ref: `task:${key}`, expires_at: new Date(Date.now() + 200000).toISOString() }, { enabled: true, allowedTargets: new Set(['self']), maxTtlSeconds: 300 }).call; }
+test.each(['channel', 'target', 'both', 'unbound'])('starts safely without a callable target (%s) and rejects direct dispatch', async missing => {
+  const settings = config();
+  if (missing === 'channel' || missing === 'both') settings.channels.telegram.enabled = false;
+  if (missing === 'target' || missing === 'both') settings.targets[0]!.enabled = false;
+  if (missing === 'unbound') settings.targets = [];
+  const store = new CallStore(':memory:');
+  const context = vi.fn(async () => facts);
+  const voice = vi.fn(async () => { throw new Error('Unexpected platform connection'); });
+  const live = vi.fn(() => { throw new Error('Unexpected Live session'); });
+  const runtime = await createRuntime({ config: parseConfig(settings), store }, {
+    backend: { context, delegate: vi.fn(), deliverEvent: vi.fn() }, voice, live, environment: () => '123',
+  });
+  try {
+    expect(runtime.readyChannels.size).toBe(0);
+    const call = request(store);
+    await runtime.onCallCreated(call);
+    expect(store.getCall(call.call_id)).toMatchObject({ state: 'ended', reason: 'runtime_unavailable' });
+    expect(context).not.toHaveBeenCalled(); expect(voice).not.toHaveBeenCalled(); expect(live).not.toHaveBeenCalled();
+  } finally { await runtime.close(); store.close(); }
+});
 async function fixture(options: { connect?: boolean; obsolete?: boolean; maxSeconds?: number; liveReady?: boolean; language?: string } = {}) {
   const store = new CallStore(':memory:');
   let callbacks!: VoiceEvents;

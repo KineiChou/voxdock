@@ -43,4 +43,6 @@ The [sidecar observer](whatsapp-target-pairing.md) never stores general message 
 
 ## Unlink transaction
 
+The global calling preference stays enabled while its last channel or target is unlinked. This is a valid unconfigured state: the console reports not ready, no voice adapter is created, and call admission and resume reject it. Fresh account authorization alone does not restore the disabled target. Confirming a verified receiving number restores availability without changing the operator's calling preference or maintenance pause.
+
 Runtime admission stays held across disabling the WhatsApp configuration and the provider mutation. A configuration-install failure prevents logout; an unconfirmed provider result leaves the disabled revision committed and persists recovery pause. Shutdown drains this mutation before closing shared storage. The sidecar records per-session unlink recovery, distinguishes remote sign-out acknowledgement from local deletion, and rejects new pairing until cleanup is complete. It does not erase other accounts or VoxDock call records. Controlled status exposes pending cleanup even if the device ID is already absent.
