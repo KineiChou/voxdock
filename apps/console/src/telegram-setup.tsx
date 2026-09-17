@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { Alert, Anchor, Button, Divider, Stack, Text } from "@mantine/core";
 import type { ConsoleConfigurationView } from "../../../packages/contracts/src/console-configuration";
-import { api, queryClient } from "./api";
+import { api, queryClient, useResource } from "./api";
+import type { TelegramSetup as Setup } from "../../../packages/contracts/src/console-pairing";
+import { TelegramTargetPairingForm } from "./telegram-target-pairing";
 import { ConnectionSettings, TelegramTarget } from "./connection-settings";
 import {
   ConnectionLogin,
@@ -18,6 +20,10 @@ export function TelegramSetup({
   configuration?: ConsoleConfigurationView;
   authenticated: boolean;
 }) {
+  const setup = useResource<Setup>("/connections/telegram/setup");
+  const [pairingActive, setPairingActive] = useState(false);
+  const [pairingBusy, setPairingBusy] = useState(false);
+  const pairingInProgress = pairingActive || pairingBusy;
   const [editor, setEditor] = useState<{
     section: Section;
     initial: ConsoleConfigurationView;
@@ -30,7 +36,8 @@ export function TelegramSetup({
     !!configuration?.settings.telegram.api_id &&
     !!configuration.credentials.telegram_api_hash;
   const linking = loginBusy || !!(flow && !connectionTerminal(flow));
-  const linked = authenticated || flow?.state === "connected";
+  const linked =
+    setup.data?.linked ?? (authenticated || flow?.state === "connected");
   const target = configuration?.settings.targets.find(
     (item) => item.channel === "telegram",
   );
@@ -57,6 +64,9 @@ export function TelegramSetup({
   return (
     <Stack mt="lg" gap="md">
       {error && <Failure error={error} />}
+      {setup.error && (
+        <Failure error={setup.error} retry={() => void setup.refetch()} />
+      )}
       <Stack gap="sm">
         <Text fw={600}>1. Telegram application</Text>
         <Text size="sm">
@@ -86,7 +96,7 @@ export function TelegramSetup({
         ) : (
           <Button
             variant="light"
-            disabled={linking || editing}
+            disabled={linking || editing || pairingInProgress}
             loading={loading === "application"}
             onClick={() => void open("application")}
           >
@@ -105,6 +115,12 @@ export function TelegramSetup({
         {!credentialsReady && (
           <Alert>Save your API ID and API hash in step 1 to continue.</Alert>
         )}
+        {pairingInProgress && (
+          <Text size="sm" c="dimmed">
+            Finish or cancel receiving-account pairing before changing the
+            calling account.
+          </Text>
+        )}
         {editing && (
           <Text size="sm" c="dimmed">
             Save or cancel your settings changes before connecting.
@@ -113,7 +129,7 @@ export function TelegramSetup({
         <ConnectionLogin
           channel="telegram"
           authenticated={authenticated}
-          disabled={!credentialsReady || editing}
+          disabled={!credentialsReady || editing || pairingInProgress}
           onFlowChange={setFlow}
           onBusyChange={setLoginBusy}
         />
@@ -136,6 +152,18 @@ export function TelegramSetup({
             account.
           </Text>
         )}
+        {linked && setup.data && !setup.data.pairing_available &&
+          !pairingInProgress && (
+            <Alert color="orange">
+              Receiving-account pairing is unavailable. Check the Telegram connection.
+            </Alert>
+          )}
+        <TelegramTargetPairingForm
+          disabled={!linked || linking || editing}
+          available={!!setup.data?.pairing_available && !setup.error}
+          onActiveChange={setPairingActive}
+          onBusyChange={setPairingBusy}
+        />
         {editor?.section === "target" ? (
           <TelegramTarget
             initial={editor.initial}
@@ -145,11 +173,11 @@ export function TelegramSetup({
         ) : (
           <Button
             variant="light"
-            disabled={!linked || linking || editing}
+            disabled={!linked || linking || editing || pairingInProgress}
             loading={loading === "target"}
             onClick={() => void open("target")}
           >
-            Configure receiving account · advanced
+            Advanced: enter receiving user ID manually
           </Button>
         )}
         {editor?.section === "calling" ? (
@@ -163,7 +191,8 @@ export function TelegramSetup({
           <Button
             variant="light"
             disabled={
-              !linked || linking || editing || (!target?.enabled && !callingEnabled)
+              !linked || linking || editing || pairingInProgress ||
+              (!target?.enabled && !callingEnabled)
             }
             loading={loading === "calling"}
             onClick={() => void open("calling")}

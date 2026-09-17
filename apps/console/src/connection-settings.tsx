@@ -113,9 +113,8 @@ export function TelegramTarget({
     >
       <Stack>
         <Text size="sm">
-          Telegram receiving-account pairing is not available yet. Enter the
-          numeric Telegram user ID of your receiving account. The calling
-          account must be able to reach this user.
+          Enter the numeric Telegram user ID of your receiving account manually.
+          The calling account must be able to reach this user.
         </Text>
         <TextInput
           label="Receiving Telegram user ID"

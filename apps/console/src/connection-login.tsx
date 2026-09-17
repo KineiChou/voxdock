@@ -88,7 +88,7 @@ export function ConnectionLogin({
         void queryClient.invalidateQueries({ queryKey: ["/connections"] });
       if (poll.data.state === "connected")
         void queryClient.invalidateQueries({
-          queryKey: ["/connections/whatsapp/setup"],
+          queryKey: [`/connections/${channel}/setup`],
         });
     }
   }, [poll.data]);
@@ -145,7 +145,7 @@ export function ConnectionLogin({
       setPassword("");
       await queryClient.invalidateQueries({ queryKey: ["/connections"] });
       await queryClient.invalidateQueries({
-        queryKey: ["/connections/whatsapp/setup"],
+        queryKey: [`/connections/${channel}/setup`],
       });
     } catch (error) {
       setError(error as Error);
