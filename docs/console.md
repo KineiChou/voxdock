@@ -5,39 +5,47 @@ VoxDock includes a responsive web console at `/console/`. It uses the same bridg
 ## Available views
 
 - **Overview:** last 1, 7 or 30 local calendar days; call counts, observed connection rate, settled Live time, delegation outcomes, daily trends, platform distribution, today's budget, active calls and calls requiring review.
-- **Calls:** server-filtered, cursor-paginated records; lifecycle events, latest delegation results, retained transcript fragments and JSON/HTML export. An end request is followed by polling the recorded state; acceptance is not proof of termination.
-- **Connections:** enabled channels, runtime readiness and configured target references. Disabled and unavailable are distinct states. The page does not initiate a platform login.
-- **Settings:** effective file configuration and retention limits, with authenticated pause/resume controls. Runtime settings remain file-managed; there is no browser save operation.
+- **Calls:** server-filtered, cursor-paginated records; lifecycle events, latest delegation results, server-grouped conversation text and JSON/HTML export. An end request is followed by polling the recorded state; acceptance is not proof of termination.
+- **Connections:** account authentication and calling readiness, channel credentials, fixed targets, Telegram phone/code/two-step verification, and WhatsApp QR pairing. Pairing can be cancelled and accounts disconnected. An authenticated account can remain disabled for calls.
+- **Settings:** save and apply calling limits, Live voice/language/credentials, agent backend and retention; change administrator credentials and remote-management access. Pause/resume eligibility comes from the backend.
 
-Platform pairing, managed configuration, scoped Agent credentials and MCP are separate work. The existing fixed-target `POST /v1/calls` and CLI `call` remain available for authorized integrations. Task routing and long-term memory stay in the business backend.
+Scoped Agent credentials and MCP remain separate work. The existing fixed-target `POST /v1/calls` and CLI `call` remain available for authorized integrations. Task routing and long-term memory stay in the business backend.
 
 ## Enable the console
 
-Build the frontend, generate an independent administrator password and write its hash. Use a private input file so the password does not enter shell history or process arguments:
-
-```sh
-pnpm build
-(umask 077; openssl rand -base64 24 > ./local/console-password)
-pnpm voxdock console password \
-  --password-file ./local/console-password \
-  --out ./local/admin.hash
-```
-
-Keep the generated password in your password manager. The bridge reads only `admin.hash`; it does not need the plaintext input file. Add the following to the initialized configuration:
+Build the frontend and enable the console in the deployment configuration:
 
 ```json
 {
   "console": {
     "enabled": true,
-    "public_origin": "http://127.0.0.1:8787",
-    "password_hash_file": "./admin.hash"
+    "public_origin": "http://127.0.0.1:8787"
   }
 }
 ```
 
-This is a configuration fragment, not a replacement for the existing configuration. Restart the service and open `http://127.0.0.1:8787/console/`. Remote instances must use an exact HTTPS origin such as `https://voice.example.com`, without a trailing slash, path, query or credentials. Forward the entire host to the bridge; no additional platform or media port is needed for the console. Keep WaCalls private.
+This is a fragment, not a replacement configuration. Start the service and open `/console/`. On first startup, VoxDock creates username `admin` and a random password in the private `bootstrap-credentials.txt` file inside the configured data directory. Read it locally, sign in, and change credentials in Settings. Credential rotation removes the bootstrap file and invalidates existing sessions. Passwords must contain 12–256 characters; usernames use letters, digits, dots, underscores or hyphens and start with a letter or digit.
 
-To rotate a password, generate a **new** hash file, change the reference and restart. Existing files are never silently overwritten. Restart invalidates all web sessions. Console login is independent of API, backend and platform credentials.
+Existing installations with `console.password_hash_file` migrate to username `admin` and their existing password. After the account file exists, changing the legacy hash file does not rotate the account; use Settings or offline recovery. Console credentials are independent of API, backend and platform credentials.
+
+For recovery, stop the service, place a new password in a private file, then run:
+
+```sh
+pnpm voxdock console recover --config ./local/voxdock.config.json \
+  --username admin --password-file ./local/new-password --allow-remote true
+```
+
+Only the options being changed are required. Restart afterward. Recovery requires exclusive ownership of the data directory and never prints the password.
+
+Remote instances require an exact HTTPS `public_origin`, without a path, query, credentials or trailing slash. Forward the whole host and keep WaCalls private. `allow_remote_management=false` restricts Settings, Connections and account management on both cookie and bearer routes; login, Overview, Calls and call controls remain usable. Local access includes loopback and private-network addresses. A reverse proxy must be listed by literal IP in `console.trusted_proxy_addresses` and **replace** `X-Forwarded-For` with exactly one original client IP. Forwarded headers from untrusted peers, missing trusted-proxy headers and address chains are not accepted as local management access.
+
+## Apply settings and pair accounts
+
+The deployment file owns the listener, public origin, trusted proxies, data paths, timezone and WhatsApp service endpoint/media credential. The managed configuration owns calling, Live, backend, retention, channel account settings and fixed targets. GET responses expose credential-presence flags only. Secret inputs are write-only replacements; leaving one blank retains the existing credential.
+
+Save and apply validates the complete configuration and expected revision, rejects active or uncertain calls, pauses new calls, and serializes runtime replacement with pairing operations. The managed revision commits only after the replacement runtime starts. A failed replacement attempts to restore the prior runtime and remains paused; an uncertain shutdown stays blocked. Resume explicitly after reviewing readiness. A revision conflict requires reloading saved settings and reviewing edits. Browser polling does not overwrite unsaved form values.
+
+For Telegram, save the API ID/hash with the channel disabled, connect using the phone verification flow, then enable the channel and a fixed target. WhatsApp pairing requires a private WaCalls service built with the current controlled-session patch; rebuild the sidecar image when upgrading this feature. An older image without `/api/voxdock/sessions/...` cannot provide this pairing flow. Scan the displayed QR in WhatsApp Linked devices. Pairing, account authentication and call readiness are separate states; none establishes a successful phone call. Timeouts/cancellation are reported by the backend, and uncertain cleanup blocks further changes.
 
 The local Docker build includes the frontend. Leave `console.enabled` false to run headless. For frontend development, build once, run the bridge on loopback port 8787, set the console origin to `http://127.0.0.1:5173`, then run `pnpm --filter @voxdock/console dev`. Vite proxies `/admin` to the local bridge.
 
@@ -50,9 +58,18 @@ Authenticated browser calls use `/admin/v1`; operator CLI projections use `/v1/c
 | `GET /overview?days=1\|7\|30` | Calendar-window totals and chart series |
 | `GET /calls` | Filters: channel, direction, state, from/to UTC timestamps; limit 1–100 and opaque cursor |
 | `GET /calls/{id}` | Summary, events and latest result per current delegation context |
+| `GET /calls/{id}/conversation` | Server-grouped retained text with source partial/final flags; raw records unchanged |
 | `GET /calls/{id}/transcripts` | Insertion-order cursor, limit 1–200, retention availability |
 | `GET /calls/{id}/export` | `format=json\|html`; redacted by default, `redact=false` explicitly includes private records |
-| `GET /connections`, `GET /settings` | Effective status and a safe configuration projection |
+| `GET /connections`, `GET /settings` | Account authentication, readiness and applied status |
+| `GET /settings/configuration` | Revision, editable settings, credential-presence flags and deployment fields |
+| `PUT /settings/configuration` | Complete `{ expected_revision, settings, secrets? }`; validate and apply synchronously |
+| `POST /connections/telegram/login` | `{ phone }`, international format |
+| `POST /connections/whatsapp/connect` | `{}`; start QR pairing |
+| `GET /connections/flows/{id}` | Current challenge or terminal state |
+| `POST /connections/flows/{id}/code`, `/password` | `{ code }` or `{ password }` |
+| `POST /connections/flows/{id}/cancel` | `{}`; cancel pairing |
+| `POST /connections/{channel}/disconnect` | `{}`; disconnect configured account |
 | `POST /control/pause` | Persistently stops new admission; existing calls continue |
 | `POST /control/resume` | Requires enabled configuration, a ready configured target and no active or uncertain call |
 | `POST /calls/{id}/end` | Shares the original call-ending service |
@@ -67,6 +84,19 @@ pnpm voxdock settings --config ./local/voxdock.config.json
 pnpm voxdock resume --online --config ./local/voxdock.config.json
 ```
 
+`GET/PUT /admin/v1/account` are cookie-authenticated account routes. Updates require the current password and account revision; username/password rotation requires login again. Incorrect current passwords return 403 without revoking the session.
+
+The CLI uses the same managed configuration and pairing services:
+
+```sh
+pnpm voxdock configuration --config ./local/voxdock.config.json
+pnpm voxdock configuration --config ./local/voxdock.config.json --file ./local/configuration-update.json
+pnpm voxdock connection connect --channel telegram --input-file ./local/phone.json --config ./local/voxdock.config.json
+pnpm voxdock connection status --flow FLOW_ID --config ./local/voxdock.config.json
+```
+
+The private update file contains the PUT body, including `expected_revision` and the complete `settings`; optional `secrets` contains only replacements. Pairing input files contain `{ "phone": "+..." }`, `{ "code": "..." }` or `{ "password": "..." }` as appropriate. `connection code|password|cancel --flow ID` and `connection disconnect --channel telegram|whatsapp` complete the lifecycle. Keep credential-bearing files private.
+
 Offline `resume` and `reconcile` retain their existing process-lock requirements. A console user cannot clear an uncertain outcome by clicking Resume.
 
 ## Measurement rules
@@ -79,7 +109,7 @@ All aggregation and eligibility rules execute on the server. The browser formats
 - Call duration is the recorded interval from connection to the terminal transition. It is not measured speech time or billable provider usage. Manual reconciliation can extend that interval.
 - Live seconds are separate **settled**, **reserved** and **unknown** ledger values. Reserved/unknown amounts reduce the admission budget and are not reported as measured consumption. The ledger assigns a reservation to its starting local day. No token or currency estimates are fabricated.
 - A delegation contributes once, using its latest result for its current context revision. `accepted`, `working`, `needs_clarification` or no result remain pending; model text is not independent evidence of an external action.
-- Transcript fragments preserve their partial/final flags, session identifiers and retention state. No raw audio is recorded. Full detail/export may contain private conversation text; redacted exports omit that text and identifying references.
+- Raw transcript fragments preserve their partial/final flags, session identifiers and retention state. The [conversation projection](console-conversation.md) joins adjacent text deltas on the server without manufacturing final turns. No raw audio is recorded. Full detail/export may contain private conversation text; redacted exports omit that text and identifying references.
 
 Changing the configured timezone when a usage ledger already uses another timezone is rejected for usage reporting/admission. Keep the existing timezone until an explicit ledger migration is available.
 
@@ -89,6 +119,6 @@ Database schema 2 adds durable call facts and monotonic transcript cursors. Migr
 
 Administrator passwords use salted scrypt hashes. Fastify secure-session issues an encrypted, HttpOnly, SameSite=Strict cookie with an eight-hour expiry; a bounded server-side session registry permits logout revocation. Login is rate-limited, and authenticated mutations require the configured Origin and a CSRF token. Sessions disappear on restart. There is one operator, not a multi-user permission system.
 
-The frontend stores neither a bearer token nor transcripts in local storage. Private responses use `no-store`; React renders text without HTML injection, and audit HTML escapes source content. The browser never receives platform sessions, QR codes, passwords, secret values or arbitrary filesystem access.
+The frontend stores neither a bearer token nor transcripts in local storage. Private responses use `no-store`; React renders text without HTML injection, and audit HTML escapes source content. The browser receives ephemeral QR challenges only during authenticated pairing and accepts write-only credential input. It never reads back stored passwords, platform sessions, secret values or arbitrary files.
 
 The UI reuses [Mantine](https://mantine.dev/guides/vite/) AppShell, inputs, tables, dialogs and charts, with React Query for request state and React Router for navigation. This avoids maintaining a private foundation of copied components. The alternatives reviewed were [shadcn/ui](https://ui.shadcn.com/docs), which gives more source-level control with more component maintenance, and [Ant Design](https://ant.design/components/overview/), whose larger administration conventions are unnecessary for this scope. Dependency versions are pinned in the workspace lockfile. The Fastify server owns authentication, validation, query projections and call controls; no separate frontend backend or browser call coordinator is introduced.

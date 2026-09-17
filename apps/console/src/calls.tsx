@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import {
   Alert,
@@ -19,8 +18,8 @@ import {
 import type {
   ConsoleCallDetail,
   ConsoleCallPage,
-  ConsoleTranscriptPage,
 } from "../../../packages/contracts/src/console";
+import type { ConsoleConversation } from "../../../packages/contracts/src/console-configuration";
 import { api, exportCall, queryClient, useResource } from "./api";
 import {
   CallsTable,
@@ -278,7 +277,10 @@ export function CallDetail() {
                       ? date(data.summary.ended_at)
                       : "Not recorded",
                   ],
-                  ["Recorded call interval", seconds(data.summary.duration_seconds)],
+                  [
+                    "Recorded call interval",
+                    seconds(data.summary.duration_seconds),
+                  ],
                   [
                     "Audio",
                     data.summary.call.audio_ready ? "Ready" : "Not ready",
@@ -467,90 +469,51 @@ export function CallDetail() {
   );
 }
 function Transcripts({ id }: { id: string }) {
-  const query = useInfiniteQuery({
-    queryKey: ["transcripts", id],
-    initialPageParam: null as string | null,
-    queryFn: ({ pageParam, signal }) =>
-      api<ConsoleTranscriptPage>(
-        `/calls/${encodeURIComponent(id)}/transcripts?limit=100${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""}`,
-        { signal },
-      ),
-    getNextPageParam: (last) => last.next_cursor ?? undefined,
-    refetchInterval: () =>
-      document.visibilityState === "visible" ? 10_000 : false,
-    refetchIntervalInBackground: false,
-  });
+  const query = useResource<ConsoleConversation>(
+    `/calls/${encodeURIComponent(id)}/conversation`,
+  );
   return (
-    <Panel
-      title="Conversation fragments"
-      aside={
-        <Text size="xs" c="dimmed">
-          Each fragment is shown as recorded
-        </Text>
-      }
-    >
+    <Panel title="Conversation">
       {query.isPending ? (
         <Loading />
       ) : query.error ? (
         <Failure error={query.error} retry={() => void query.refetch()} />
       ) : (
         <Stack>
-          {query.data?.pages[0].availability !== "available" && (
+          {query.data?.availability !== "available" && (
             <Empty
               title={
-                query.data?.pages[0].availability === "disabled"
+                query.data?.availability === "disabled"
                   ? "Conversation capture is disabled"
-                  : query.data?.pages[0].availability === "expired"
+                  : query.data?.availability === "expired"
                     ? "Conversation records have expired"
-                    : "No conversation fragments"
+                    : "No conversation recorded"
               }
-              text="Available fragments will appear here according to your retention settings."
+              text="Conversations appear here when capture is enabled and records are available."
             />
           )}
-          {query.data?.pages.map((page, pageIndex) => (
-            <div key={pageIndex}>
-              {page.fragments.map((fragment) => (
-                <div
-                  className={`fragment ${fragment.speaker}`}
-                  key={fragment.id}
-                >
-                  <Group justify="space-between">
-                    <Text size="sm" fw={600}>
-                      {fragment.speaker === "user" ? "You" : "Assistant"}
-                    </Text>
-                    <Group gap={6}>
-                      <Text size="xs" c="dimmed">
-                        {seconds(fragment.start_ms / 1000)}
-                      </Text>
-                      <Badge
-                        variant="light"
-                        color={fragment.final ? "gray" : "orange"}
-                        size="xs"
-                      >
-                        {fragment.final ? "Final fragment" : "Partial fragment"}
-                      </Badge>
-                    </Group>
-                  </Group>
-                  <Text size="sm" mt={8} className="preserve-text">
-                    {fragment.text}
+          {query.data?.turns.map((turn) => (
+            <div className={`fragment ${turn.speaker}`} key={turn.id}>
+              <Group justify="space-between">
+                <Text size="sm" fw={600}>
+                  {turn.speaker === "user" ? "You" : "Assistant"}
+                </Text>
+                <Group gap={6}>
+                  <Text size="xs" c="dimmed">
+                    {seconds(turn.start_ms / 1000)}
                   </Text>
-                  <Text size="xs" c="dimmed" mt={8}>
-                    Context revision {fragment.context_revision} · Fragment{" "}
-                    {fragment.seq}
-                  </Text>
-                </div>
-              ))}
+                  {!turn.final && (
+                    <Badge variant="light" color="orange" size="xs">
+                      Partial
+                    </Badge>
+                  )}
+                </Group>
+              </Group>
+              <Text size="sm" mt={8} className="preserve-text">
+                {turn.text}
+              </Text>
             </div>
           ))}
-          {query.hasNextPage && (
-            <Button
-              variant="default"
-              loading={query.isFetchingNextPage}
-              onClick={() => void query.fetchNextPage()}
-            >
-              Load more fragments
-            </Button>
-          )}
         </Stack>
       )}
     </Panel>

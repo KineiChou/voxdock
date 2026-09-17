@@ -188,7 +188,7 @@ try {
   check((await request(`${origin}/admin/v1/overview`)).status === 401, "console_authentication_missing");
   const login = await fetch(`${origin}/admin/v1/session`, {
     method: "POST", headers: { origin, "content-type": "application/json" },
-    body: JSON.stringify({ password: consolePassword }), signal: AbortSignal.timeout(3000),
+    body: JSON.stringify({ username: 'admin', password: consolePassword }), signal: AbortSignal.timeout(3000),
   });
   check(login.status === 200, "console_login_failed");
   const cookie = login.headers.get("set-cookie")?.split(";")[0];
@@ -238,7 +238,16 @@ try {
     (await command(["pause", "--config", configFile])).stdout,
   ) as { paused: boolean };
   check(pause.paused === true, "pause_failed");
+  const managed = JSON.parse((await command(['configuration', '--config', configFile])).stdout) as { revision: number; settings: { live: { voice: string } } };
+  managed.settings.live.voice = 'cedar';
+  const updateFile = join(temporary, 'settings-update.json');
+  await writeFile(updateFile, JSON.stringify({ expected_revision: managed.revision, settings: managed.settings }), { mode: 0o600 });
+  const applied = JSON.parse((await command(['configuration', '--config', configFile, '--file', updateFile])).stdout) as { revision: number };
+  check(applied.revision === managed.revision + 1, 'managed_configuration_not_applied');
+  const lockedRecovery = await command(['console', 'recover', '--config', configFile, '--allow-remote', 'true'], 1);
+  check(lockedRecovery.stderr.includes('already_running_or_data_unavailable'), 'online_recovery_not_locked');
   await stop(service);
+  await command(['console', 'recover', '--config', configFile, '--username', 'operator', '--allow-remote', 'true']);
   const restarted = await start(configFile, origin);
   const restartedStatus = await request(`${origin}/v1/capabilities`, true);
   check(restartedStatus.status === 200, "restart_authenticated_api_failed");
@@ -247,13 +256,17 @@ try {
       .calling_enabled,
     "restart_enabled_calling",
   );
+  const recovered = await fetch(`${origin}/admin/v1/session`, { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ username: 'operator', password: consolePassword }), signal: AbortSignal.timeout(3000) });
+  check(recovered.status === 200, 'recovered_account_login_failed');
+  const restored = JSON.parse((await command(['configuration', '--config', configFile])).stdout) as { settings: { live: { voice: string } } };
+  check(restored.settings.live.voice === 'cedar', 'managed_configuration_lost_on_restart');
   await stop(restarted);
   check(
     outputs.every((output) => !output.includes(token) && !output.includes(consolePassword)),
     "secret_present_in_child_output",
   );
   process.stdout.write(
-    "Control smoke passed: init, offline doctor, disabled runtime, console assets/login/overview/logout, bearer authentication, process lock, pause, shutdown and restart.\n",
+    "Control smoke passed: init, offline doctor, disabled runtime, console assets/login/overview/logout, bearer authentication, managed configuration persistence, locked/offline account recovery, pause, shutdown and restart.\n",
   );
 } catch (error) {
   const label =

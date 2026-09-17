@@ -1,0 +1,292 @@
+--- a/cmd/server/session.go
++++ b/cmd/server/session.go
+@@ -3,7 +3,6 @@
+ import (
+ 	"context"
+ 	"log/slog"
+-	"os"
+ 	"sync"
+ 	"time"
+ 
+@@ -13,7 +12,6 @@
+ 	"wacalls/internal/voip/wanode"
+ 	"wacalls/internal/wa"
+ 
+-	"github.com/mdp/qrterminal/v3"
+ 	"go.mau.fi/whatsmeow"
+ 	waBinary "go.mau.fi/whatsmeow/binary"
+ 	"go.mau.fi/whatsmeow/types"
+@@ -29,8 +27,10 @@
+ 	client *whatsmeow.Client
+ 	reg    *callRegistry
+ 
+-	mu   sync.Mutex
+-	auth AuthSnapshot
++	mu            sync.Mutex
++	auth          AuthSnapshot
++	pairingCancel context.CancelFunc
++	pairingDone   <-chan struct{}
+ }
+ 
+ func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) *Session {
+@@ -150,6 +150,8 @@
+ 			_ = s.mgr.store.setJID(s.mgr.appCtx, s.id, id.String())
+ 		}
+ 		s.setAuth(AuthSnapshot{State: "open", Paired: true})
++	case *events.Disconnected:
++		s.setAuth(AuthSnapshot{State: "disconnected", Paired: s.client.Store.ID != nil})
+ 	case *events.LoggedOut:
+ 		s.setAuth(AuthSnapshot{State: "logged_out", Paired: false})
+ 	case *events.CallOffer:
+@@ -181,6 +183,13 @@
+ }
+ 
+ func (s *Session) startPairing(ctx context.Context) error {
++	ctx, cancel := context.WithCancel(ctx)
++	s.mu.Lock()
++	if s.pairingCancel != nil {
++		s.pairingCancel()
++	}
++	s.pairingCancel = cancel
++	s.mu.Unlock()
+ 	qrChan, err := s.client.GetQRChannel(ctx)
+ 	if err != nil {
+ 		return err
+@@ -188,12 +197,29 @@
+ 	if err := s.client.Connect(); err != nil {
+ 		return err
+ 	}
++	done := make(chan struct{})
++	s.mu.Lock()
++	s.pairingDone = done
++	s.mu.Unlock()
+ 	go func() {
+-		for evt := range qrChan {
++		defer close(done)
++		for {
++			var evt whatsmeow.QRChannelItem
++			select {
++			case <-ctx.Done():
++				return
++			case item, ok := <-qrChan:
++				if !ok {
++					return
++				}
++				evt = item
++			}
++			if ctx.Err() != nil {
++				return
++			}
+ 			switch evt.Event {
+ 			case "code":
+ 				s.log.Info("scan the QR code to pair this session")
+-				qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
+ 				s.setAuth(AuthSnapshot{State: "qr", QR: evt.Code})
+ 				s.mgr.broker.emitSessionQR(s.id, evt.Code)
+ 			case "success":
+--- a/cmd/server/httpapi.go
++++ b/cmd/server/httpapi.go
+@@ -14,6 +14,9 @@
+ 
+ func (s *server) routes() http.Handler {
+ 	mux := http.NewServeMux()
++	mux.HandleFunc("GET /api/voxdock/sessions/{sid}", s.handleConnectionStatus)
++	mux.HandleFunc("POST /api/voxdock/sessions/{sid}/connect", s.handleConnectionConnect)
++	mux.HandleFunc("POST /api/voxdock/sessions/{sid}/disconnect", s.handleConnectionDisconnect)
+ 	if s.mediaAuth != nil {
+ 		mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/media-token", s.handleMediaToken)
+ 		mux.HandleFunc("GET /api/sessions/{sid}/calls/{id}/media", s.handleMedia)
+--- /dev/null
++++ b/cmd/server/connection.go
+@@ -0,0 +1,96 @@
++package main
++
++import (
++	"go.mau.fi/whatsmeow"
++	"net/http"
++	"regexp"
++	"sync"
++)
++
++// Serialize operator changes; pairing is asynchronous and status reads never reset it.
++var connectionMu sync.Mutex
++var connectionID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,100}$`)
++
++func (s *server) connectionStatus(w http.ResponseWriter, sess *Session) {
++	w.Header().Set("Cache-Control", "no-store")
++	if sess == nil {
++		writeJSON(w, http.StatusOK, map[string]any{"paired": false, "state": "missing"})
++		return
++	}
++	sess.mu.Lock()
++	a := sess.auth
++	sess.mu.Unlock()
++	if a.State == "open" && (!sess.client.IsConnected() || !sess.client.IsLoggedIn()) {
++		a.State = "disconnected"
++		a.QR = ""
++	}
++	writeJSON(w, http.StatusOK, map[string]any{"paired": sess.client.Store.ID != nil, "state": a.State, "qr": a.QR})
++}
++func (s *server) handleConnectionStatus(w http.ResponseWriter, r *http.Request) {
++	connectionMu.Lock()
++	defer connectionMu.Unlock()
++	sess, _ := s.sessions.Get(r.PathValue("sid"))
++	s.connectionStatus(w, sess)
++}
++func (s *server) handleConnectionConnect(w http.ResponseWriter, r *http.Request) {
++	connectionMu.Lock()
++	defer connectionMu.Unlock()
++	id := r.PathValue("sid")
++	if !connectionID.MatchString(id) {
++		writeJSON(w, 400, map[string]string{"error": "invalid session"})
++		return
++	}
++	sess, exists := s.sessions.Get(id)
++	if !exists {
++		if err := s.sessions.store.insert(s.sessions.appCtx, id, "VoxDock"); err != nil {
++			writeJSON(w, 409, map[string]string{"error": "session unavailable"})
++			return
++		}
++		sess = newSession(s.sessions, id, "VoxDock", whatsmeow.NewClient(s.sessions.container.NewDevice(), s.sessions.waLogger))
++		sess.setAuth(AuthSnapshot{State: "disconnected"})
++		s.sessions.register(sess)
++	}
++	if sess.reg.count() != 0 {
++		writeJSON(w, 409, map[string]string{"error": "session has active calls"})
++		return
++	}
++	sess.mu.Lock()
++	state := sess.auth.State
++	sess.mu.Unlock()
++	if state == "open" && (!sess.client.IsConnected() || !sess.client.IsLoggedIn()) {
++		state = "disconnected"
++	}
++	if state != "open" && state != "qr" && state != "connecting" {
++		sess.setAuth(AuthSnapshot{State: "connecting", Paired: sess.client.Store.ID != nil})
++		if err := sess.connect(s.sessions.appCtx); err != nil {
++			sess.setAuth(AuthSnapshot{State: "unknown"})
++			writeJSON(w, 502, map[string]string{"error": "connection unconfirmed"})
++			return
++		}
++	}
++	s.connectionStatus(w, sess)
++}
++func (s *server) handleConnectionDisconnect(w http.ResponseWriter, r *http.Request) {
++	connectionMu.Lock()
++	defer connectionMu.Unlock()
++	sess, _ := s.sessions.Get(r.PathValue("sid"))
++	if sess != nil {
++		if sess.reg.count() != 0 {
++			writeJSON(w, 409, map[string]string{"error": "session has active calls"})
++			return
++		}
++		sess.mu.Lock()
++		if sess.pairingCancel != nil {
++			sess.pairingCancel()
++			sess.pairingCancel = nil
++		}
++		done := sess.pairingDone
++		sess.mu.Unlock()
++		sess.client.Disconnect()
++		if done != nil {
++			<-done
++		}
++		sess.setAuth(AuthSnapshot{State: "disconnected", Paired: sess.client.Store.ID != nil})
++	}
++	s.connectionStatus(w, sess)
++}
+--- /dev/null
++++ b/cmd/server/connection_test.go
+@@ -0,0 +1,92 @@
++package main
++
++import (
++	"encoding/json"
++	"go.mau.fi/whatsmeow/types"
++	"go.mau.fi/whatsmeow/types/events"
++	"net/http/httptest"
++	"testing"
++)
++
++func TestConnectionManagementPreservesSession(t *testing.T) {
++	mgr := newTestManager(t)
++	sess := mgr.addUnconnected(t, "test")
++	jid := types.NewJID("12345", types.DefaultUserServer)
++	sess.client.Store.ID = &jid
++	sess.setAuth(AuthSnapshot{State: "open", Paired: true})
++	srv := &server{sessions: mgr}
++	for _, operation := range []string{"status", "disconnect"} {
++		req := httptest.NewRequest("POST", "/", nil)
++		req.SetPathValue("sid", sess.id)
++		response := httptest.NewRecorder()
++		switch operation {
++		case "status":
++			srv.handleConnectionStatus(response, req)
++		case "connect":
++			srv.handleConnectionConnect(response, req)
++		case "disconnect":
++			srv.handleConnectionDisconnect(response, req)
++		}
++		if response.Code != 200 {
++			t.Fatalf("%s: %d", operation, response.Code)
++		}
++		if sess.client.Store.ID == nil || *sess.client.Store.ID != jid {
++			t.Fatal("operator operation destroyed paired device")
++		}
++		if response.Header().Get("Cache-Control") != "no-store" {
++			t.Fatal("sensitive response must not be cached")
++		}
++	}
++	if sess.auth.State != "disconnected" {
++		t.Fatal("disconnect state not set")
++	}
++}
++func TestConnectionStatusDoesNotCreateSession(t *testing.T) {
++	srv := &server{sessions: newTestManager(t)}
++	req := httptest.NewRequest("GET", "/", nil)
++	req.SetPathValue("sid", "missing")
++	response := httptest.NewRecorder()
++	srv.handleConnectionStatus(response, req)
++	if len(srv.sessions.infos()) != 0 {
++		t.Fatal("read created a session")
++	}
++}
++
++func TestConnectionStatusChecksLiveSocket(t *testing.T) {
++	mgr := newTestManager(t)
++	sess := mgr.addUnconnected(t, "test")
++	jid := types.NewJID("12345", types.DefaultUserServer)
++	sess.client.Store.ID = &jid
++	sess.setAuth(AuthSnapshot{State: "open", Paired: true})
++	srv := &server{sessions: mgr}
++	req := httptest.NewRequest("GET", "/", nil)
++	req.SetPathValue("sid", sess.id)
++	response := httptest.NewRecorder()
++	srv.handleConnectionStatus(response, req)
++	var body map[string]any
++	_ = json.Unmarshal(response.Body.Bytes(), &body)
++	if body["state"] == "open" {
++		t.Fatal("stale open auth state reported as connected")
++	}
++	sess.handleEvent(&events.Disconnected{})
++	if sess.auth.State != "disconnected" {
++		t.Fatal("disconnect event left stale auth state")
++	}
++}
++func TestDisconnectJoinsPairingWorker(t *testing.T) {
++	mgr := newTestManager(t)
++	sess := mgr.addUnconnected(t, "test")
++	done := make(chan struct{})
++	cancelled := make(chan struct{})
++	sess.pairingDone = done
++	sess.pairingCancel = func() { close(cancelled) }
++	go func() { <-cancelled; sess.setAuth(AuthSnapshot{State: "qr", QR: "late"}); close(done) }()
++	srv := &server{sessions: mgr}
++	req := httptest.NewRequest("POST", "/", nil)
++	req.SetPathValue("sid", sess.id)
++	response := httptest.NewRecorder()
++	srv.handleConnectionDisconnect(response, req)
++	if sess.auth.QR != "" || sess.auth.State != "disconnected" {
++		t.Fatal("late pairing publication survived disconnect")
++	}
++}

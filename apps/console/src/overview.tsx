@@ -32,7 +32,7 @@ import {
 export function Overview() {
   const [days, setDays] = useState("7");
   const overview = useResource<ConsoleOverview>(`/overview?days=${days}`);
-  const settings = useResource<ConsoleSettings>("/settings");
+  const settings = useResource<Pick<ConsoleSettings, 'calling'>>("/control/status");
   const data = overview.data;
   return (
     <>

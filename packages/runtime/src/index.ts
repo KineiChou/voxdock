@@ -109,7 +109,7 @@ export async function createRuntime(options: { config: BridgeConfig; store: Call
       if (!current(a) || a.stopping || store.getCall(a.callId).state !== 'connected') return;
       a.context = context;
       if (context.obsolete) { a.live.instructions('Identify yourself as an AI assistant and say the notification is no longer current. Do not report old task details.'); a.greeted = true; return; }
-      const facts = JSON.stringify({ purpose: context.purpose, facts: context.facts, language: context.language });
+      const facts = JSON.stringify({ purpose: context.purpose, facts: context.facts, language: config.live.language });
       if (Buffer.byteLength(facts) > 8000) throw new Error('Context exceeds bounded spoken briefing');
       for (const part of chunks(facts)) a.live.thinking(`Business context data: ${part}`);
       a.live.instructions('Immediately greet without waiting for the caller. Introduce yourself as an AI assistant in the language supplied with the context, briefly explain the purpose and verified facts, then pause and listen.');
@@ -277,13 +277,13 @@ export async function createRuntime(options: { config: BridgeConfig; store: Call
   if (config.calling.enabled && backend) {
     for (const target of config.targets) {
       if (!target.enabled || !config.channels[target.channel].enabled) continue;
-      const peerId = env(target.peer_id_env); if (!peerId) continue;
+      const peerId = target.peer_id ?? (target.peer_id_env ? env(target.peer_id_env) : undefined); if (!peerId) continue;
       try {
         let voice: VoiceDriver;
         if (dependencies.voice) voice = await dependencies.voice(target, peerId, callbacks(target));
         else if (target.channel === 'telegram' && config.channels.telegram.enabled) {
           const channel = config.channels.telegram;
-          voice = await createTelegramProcess({ apiId: Number(env(channel.api_id_env)), apiHashFile: file(channel.api_hash_file), sessionFile: file(channel.session_file), peerId }, callbacks(target));
+          voice = await createTelegramProcess({ apiId: channel.api_id ?? Number(channel.api_id_env ? env(channel.api_id_env) : undefined), apiHashFile: file(channel.api_hash_file), sessionFile: file(channel.session_file), peerId }, callbacks(target));
         } else if (target.channel === 'whatsapp' && config.channels.whatsapp.enabled) {
           const channel = config.channels.whatsapp;
           voice = await createWhatsAppDriver({ baseUrl: channel.endpoint, sessionId: channel.account_ref, peerId, mediaSecret: await secret(file(channel.media_token_file)) }, callbacks(target));
@@ -312,10 +312,11 @@ export async function createRuntime(options: { config: BridgeConfig; store: Call
       closing = true;
       clearInterval(outboxTimer); outboxAbort.abort();
       if (active) await stop(active, 'shutdown', true);
-      await Promise.allSettled([...routes.values()].map(route => deadline(route.voice.close(), 5000)));
+      const cleanup = await Promise.allSettled([...routes.values()].map(route => deadline(route.voice.close(), 5000)));
       await Promise.allSettled([...finalizing].flatMap(a => a.finalized ? [a.finalized] : []));
       if (outboxFlight) await deadline(outboxFlight, 1000).catch(() => {});
       readyChannels.clear(); disposed = true;
+      if (cleanup.some(result => result.status === 'rejected')) throw new Error('platform_cleanup_unknown');
     },
   };
 }

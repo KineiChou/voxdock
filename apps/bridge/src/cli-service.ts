@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Channel, CallStatus, DelegationResult } from "@voxdock/contracts";
@@ -8,6 +8,11 @@ import { createBridgeServer } from "./server.js";
 import { loadConfig, controlToken, readPrivateText, CliError } from "./cli-files.js";
 import { isConsolePasswordHash } from "./console-password.js";
 import { acquireProcessLock } from "./cli-lock.js";
+import { openConsoleAccount } from './console-account.js';
+import { ConfigurationStore } from './configuration-store.js';
+import { RuntimeManager } from './runtime-manager.js';
+import { createConnectionService, type ConnectionService } from './connection-service.js';
+import { DomainError } from '@voxdock/core';
 export interface Runtime {
   readyChannels: ReadonlySet<Channel>;
   onCallCreated(call: CallStatus): Promise<void>;
@@ -50,17 +55,14 @@ export async function startService(
   filename: string,
   factory: RuntimeFactory = defaultRuntimeFactory,
 ) {
-  const { config, directory } = loadConfig(filename);
-  const token = controlToken(config, directory);
-  const passwordHash = config.console.enabled
-    ? readPrivateText(resolve(directory, config.console.password_hash_file!))
-    : undefined;
-  if (passwordHash && !isConsolePasswordHash(passwordHash)) throw new CliError("invalid_console_password_hash");
-  const data = resolve(directory, config.service.data_dir);
+  const { config: baseline, directory } = loadConfig(filename);
+  const token = controlToken(baseline, directory);
+  const data = resolve(directory, baseline.service.data_dir);
   mkdirSync(data, { recursive: true, mode: 0o700 });
   const release = acquireProcessLock(data);
   let store: CallStore | undefined;
-  let runtime: Runtime | undefined;
+  let runtime: RuntimeManager | undefined;
+  let connections: ConnectionService | undefined;
   let app: Awaited<ReturnType<typeof createBridgeServer>> | undefined;
   let closed = false;
   async function close() {
@@ -73,6 +75,7 @@ export async function startService(
       failed = true;
     }
     try {
+      if (connections) await bounded(() => connections!.close(), 15000);
       if (runtime) await bounded(() => runtime!.close(), 25000);
     } catch {
       failed = true;
@@ -87,21 +90,46 @@ export async function startService(
     if (failed) throw new CliError("shutdown_incomplete");
   }
   try {
+    const passwordHash = baseline.console.enabled && baseline.console.password_hash_file && !existsSync(resolve(data, 'console-account.json'))
+      ? readPrivateText(resolve(directory, baseline.console.password_hash_file)) : undefined;
+    if (passwordHash && !isConsolePasswordHash(passwordHash)) throw new CliError('invalid_console_password_hash');
+    const configuration = new ConfigurationStore(baseline, directory, data);
+    configuration.prepareSessionDirectory();
+    const config = configuration.effective();
+    const account = config.console.enabled ? await openConsoleAccount({ dataDirectory: data, ...(passwordHash ? { legacyPasswordHash: passwordHash } : {}) }) : undefined;
     store = new CallStore(resolve(data, "voxdock.sqlite"), {
       persistTranscripts: config.records.transcript_retention_days > 0,
     });
     if (store.recover().length) store.setPaused(true);
-    runtime = await factory({ config, store, configDirectory: directory });
+    runtime = new RuntimeManager(config, store, directory, factory, configuration);
+    await runtime.start();
+    connections = createConnectionService({
+      acquire: () => runtime!.acquire(),
+      async getTelegramConfig() {
+        const tg = config.channels.telegram;
+        const apiId = tg.api_id ?? Number(tg.api_id_env ? process.env[tg.api_id_env] : undefined);
+        if (!Number.isSafeInteger(apiId) || apiId <= 0 || !tg.api_hash_file || !tg.session_file) throw new DomainError('telegram_credentials_required', 409);
+        return { apiId, apiHash: readPrivateText(resolve(directory, tg.api_hash_file)), sessionFile: resolve(directory, tg.session_file) };
+      },
+      async getWhatsAppConfig() {
+        const wa = config.channels.whatsapp;
+        if (!wa.endpoint || !wa.account_ref) throw new DomainError('whatsapp_service_required', 409);
+        return { baseUrl: wa.endpoint, sessionId: wa.account_ref, clientId: `voxdock:${wa.account_ref}` };
+      },
+    });
     app = await createBridgeServer({
       config,
       store,
       controlToken: token,
-      readyChannels: runtime.readyChannels,
+      management: runtime,
+      connections,
+      get readyChannels() { return runtime!.readyChannels; },
       onCallCreated: (call) => runtime!.onCallCreated(call),
       onEnd: (call) => runtime!.onEnd(call),
       onResult: (result) => runtime!.onResult(result),
-      ...(passwordHash ? { console: {
-        passwordHash,
+      ...(account ? { console: {
+        account,
+        trustedProxyAddresses: config.console.trusted_proxy_addresses,
         publicOrigin: config.console.public_origin!,
         assetsDirectory: fileURLToPath(new URL('../../console/dist', import.meta.url)),
       } } : {}),

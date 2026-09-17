@@ -4,8 +4,9 @@ import type { BridgeServerOptions } from './server.js';
 
 export function createConsoleService(options: BridgeServerOptions) {
   const { config, store } = options;
-  const ready = options.readyChannels ?? new Set();
+  const ready = { has: (channel: 'telegram' | 'whatsapp') => options.readyChannels?.has(channel) ?? false };
   const blockedReason = () => {
+    if (options.management?.managing) return 'management_busy';
     if (!config.calling.enabled) return 'calling_disabled';
     if (store.listCalls().some(call => call.state !== 'ended')) return 'active_or_uncertain_call';
     if (!options.onCallCreated || !config.targets.some(target => target.enabled && config.channels[target.channel].enabled && ready.has(target.channel))) return 'adapter_not_ready';
@@ -23,7 +24,7 @@ export function createConsoleService(options: BridgeServerOptions) {
       const paused = store.isPaused(false);
       const reason = blockedReason();
       return {
-        mode: 'file', timezone: config.timezone,
+        mode: options.management ? 'managed' : 'file', timezone: config.timezone,
         calling: {
           configured_enabled: config.calling.enabled, paused,
           accepting_calls: config.calling.enabled && !paused && reason === null,
@@ -40,10 +41,11 @@ export function createConsoleService(options: BridgeServerOptions) {
         records: { raw_audio: false, transcript_retention_days: config.records.transcript_retention_days, metadata_retention_days: config.records.metadata_retention_days },
       };
     },
-    connections(): ConsoleConnections {
+    async connections(): Promise<ConsoleConnections> {
+      const accounts = options.connections ? await options.connections.accountStatus() : { telegram: false, whatsapp: false };
       return { checked_at: new Date().toISOString(), channels: (['telegram', 'whatsapp'] as const).map(channel => {
         const connection = config.channels[channel];
-        return { channel, enabled: connection.enabled, ready: connection.enabled && ready.has(channel),
+        return { channel, authenticated: accounts[channel], enabled: connection.enabled, ready: connection.enabled && ready.has(channel),
           account_ref: connection.account_ref ?? null,
           status: !connection.enabled ? 'disabled' : ready.has(channel) ? 'ready' : 'not_ready',
           targets: config.targets.filter(target => target.channel === channel).map(target => ({ id: target.id, enabled: target.enabled, principal_ref: target.principal_ref })),

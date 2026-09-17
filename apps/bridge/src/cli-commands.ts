@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { CallStore } from "@voxdock/core";
 import { RefSchema, CallRequestSchema } from "@voxdock/contracts";
@@ -13,6 +13,8 @@ import {
   readPrivateText,
 } from "./cli-files.js";
 import { hashConsolePassword } from "./console-password.js";
+import { openConsoleAccount } from './console-account.js';
+import { ConfigurationStore } from './configuration-store.js';
 import { doctor } from "./cli-doctor.js";
 import { acquireProcessLock } from "./cli-lock.js";
 import { startService, type RuntimeFactory } from "./cli-service.js";
@@ -26,7 +28,11 @@ const help = `VoxDock commands:
   calls [--limit N --cursor CURSOR --channel CHANNEL --direction DIRECTION --state STATE --from UTC_ISO --to UTC_ISO]
   connections
   settings
+  configuration [--file PRIVATE_JSON]
+  connection connect|disconnect --channel telegram|whatsapp [--input-file PRIVATE_JSON]
+  connection status|code|password|cancel --flow ID [--input-file PRIVATE_JSON]
   console password --password-file PRIVATE_FILE --out NEW_HASH_FILE
+  console recover --config FILE [--username NAME --password-file PRIVATE_FILE --allow-remote true|false]
   call --target ID --context-ref REF --correlation-ref REF --key KEY --expires-at UTC_ISO
   end CALL_ID
   pause
@@ -36,6 +42,7 @@ const help = `VoxDock commands:
   cleanup
 All commands except init and console password accept --config FILE (default ./voxdock.config.json).
 Offline resume, reconcile and cleanup require the service to be stopped.
+Console recovery also requires the service to be stopped. Configuration changes pause new calls.
 Console password writes a new private hash file; configure its reference and restart to apply it.
 `;
 function argumentsOf(args: string[]) {
@@ -100,7 +107,9 @@ export async function runCli(
     calls: ["config", "limit", "cursor", "channel", "direction", "state", "from", "to"],
     connections: ["config"],
     settings: ["config"],
-    console: ["password-file", "out"],
+    configuration: ["config", "file"],
+    connection: ["config", "channel", "flow", "input-file"],
+    console: ["config", "username", "password-file", "out", "allow-remote"],
     call: [
       "config",
       "target",
@@ -133,7 +142,7 @@ export async function runCli(
     command === "end" ||
     command === "reconcile" ||
     command === "audit" ||
-    command === "console"
+    command === "console" || command === 'connection'
       ? 2
       : 1;
   if (positionals.length > expected + (command === "status" ? 1 : 0))
@@ -149,6 +158,19 @@ export async function runCli(
     return;
   }
   if (command === "console") {
+    if (positionals[1] === 'recover') {
+      if (values.out || (values['allow-remote'] !== undefined && !['true', 'false'].includes(values['allow-remote']))) throw new CliError('invalid_arguments');
+      if (!values.username && !values['password-file'] && values['allow-remote'] === undefined) throw new CliError('recovery_change_required');
+      const { config, directory } = loadConfig(values.config ?? './voxdock.config.json');
+      const data = resolve(directory, config.service.data_dir);
+      mkdirSync(data, { recursive: true, mode: 0o700 });
+      const release = acquireProcessLock(data);
+      try {
+        const account = await openConsoleAccount({ dataDirectory: data, ...(config.console.password_hash_file && !existsSync(resolve(data, 'console-account.json')) ? { legacyPasswordHash: readPrivateText(resolve(directory, config.console.password_hash_file)) } : {}) });
+        write(JSON.stringify(await account.recover({ ...(values.username ? { username: values.username } : {}), ...(values['password-file'] ? { new_password: readPrivateText(values['password-file']) } : {}), ...(values['allow-remote'] !== undefined ? { allow_remote_management: values['allow-remote'] === 'true' } : {}) })));
+      } finally { release(); }
+      return;
+    }
     if (positionals[1] !== "password") throw new CliError("invalid_arguments");
     const password = readPrivateText(required(values, "password-file"));
     if (password.length < 12 || password.length > 256) throw new CliError("invalid_console_password_length");
@@ -163,7 +185,8 @@ export async function runCli(
     write(JSON.stringify({ listening: service.address }));
     return service;
   }
-  const { config, directory } = loadConfig(filename);
+  const { config: baseline, directory } = loadConfig(filename);
+  const config = new ConfigurationStore(baseline, directory, resolve(directory, baseline.service.data_dir)).effective();
   const output = (value: unknown) => write(JSON.stringify(value, null, 2));
   const request = (
     path: string,
@@ -173,6 +196,24 @@ export async function runCli(
       ...options,
       ...(dependencies.fetch ? { fetch: dependencies.fetch } : {}),
     });
+  if (command === 'configuration') {
+    output(await request('/v1/console/settings/configuration', values.file ? { method: 'PUT', body: JSON.parse(readPrivateText(values.file)), timeoutMs: 60000 } : {}));
+    return;
+  }
+  if (command === 'connection') {
+    const action = positionals[1];
+    const body: unknown = values['input-file'] ? JSON.parse(readPrivateText(values['input-file'])) : {};
+    if (action === 'connect' || action === 'disconnect') {
+      const channel = required(values, 'channel');
+      if (!['telegram', 'whatsapp'].includes(channel) || values.flow) throw new CliError('invalid_arguments');
+      output(await request(`/v1/console/connections/${channel}/${action === 'connect' && channel === 'telegram' ? 'login' : action}`, { method: 'POST', body, timeoutMs: 45000 }));
+    } else if (action && ['status', 'code', 'password', 'cancel'].includes(action)) {
+      if (values.channel) throw new CliError('invalid_arguments');
+      const flow = ref(required(values, 'flow'));
+      output(await request(`/v1/console/connections/flows/${encodeURIComponent(flow)}${action === 'status' ? '' : '/' + action}`, action === 'status' ? {} : { method: 'POST', body, timeoutMs: 45000 }));
+    } else throw new CliError('invalid_arguments');
+    return;
+  }
   if (command === "doctor") {
     const checks = doctor(config, directory, dependencies.environment);
     output({

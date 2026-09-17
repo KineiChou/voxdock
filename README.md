@@ -12,7 +12,7 @@ A self-hosted voice bridge for **Telegram**, **WhatsApp**, and **GPT-Live-1**. C
 - Fixed call targets, idempotent commands, bounded duration and no automatic redial.
 - Continuous audio through GPT-Live-1 with client-managed delegation.
 - SQLite call/event records, backend receipts and JSON/HTML audit exports with optional redacted summaries.
-- A mobile-friendly operator console: call trends, Live budget, filterable audit records, connection status and pause/resume controls.
+- A mobile-friendly operator console: call trends, Live budget, filterable audit records, account pairing, managed settings and pause/resume controls.
 
 Your backend owns task execution, permissions, project routing and long-term memory. VoxDock carries the conversation and its evidence.
 
@@ -21,7 +21,7 @@ Your backend owns task execution, permissions, project routing and long-term mem
 | Area | Implemented | Validation boundary |
 | --- | --- | --- |
 | Control and records | HTTP contracts, durable admission, recovery and event outbox | Automated tests and a paused ARM64 deployment; real account operations unverified |
-| Operator console | Authenticated dashboard, server-filtered audits, connection/configuration status and CLI parity | Single operator; file-managed settings and platform pairing remain separate |
+| Operator console | Username/password login, dashboard, audits, managed configuration, Telegram/WhatsApp pairing and CLI parity | Single operator; this management update still requires integrated and live-account acceptance |
 | Telegram | MTProto/NTgCalls driver and Live runtime path | Fixtures and account-free native checks; handset calls unverified |
 | GPT-Live-1 | Primary WebSocket, PCM, transcripts, client delegation and finite close | Real 16 kHz session, phone greeting and one delegation; interruption and endurance remain unverified |
 | WhatsApp | WaCalls control/media, stored identity mapping and shared Live runtime | Two-minute outgoing conversation heard; normal handset termination and corrected incoming admission remain open |

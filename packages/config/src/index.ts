@@ -1,6 +1,7 @@
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { ChannelSchema, RefSchema } from "@voxdock/contracts";
+import { isIP } from 'node:net';
 
 const object = { additionalProperties: false } as const;
 const path = Type.String({ minLength: 1, maxLength: 4096 });
@@ -11,7 +12,8 @@ const telegram = Type.Object(
   {
     enabled: Type.Literal(true),
     account_ref: RefSchema,
-    api_id_env: env,
+    api_id_env: Type.Optional(env),
+    api_id: Type.Optional(Type.Integer({ minimum: 1, maximum: 2147483647 })),
     api_hash_file: path,
     session_file: path,
   },
@@ -31,6 +33,7 @@ const disabledTelegram = Type.Object(
     enabled: Type.Literal(false, { default: false }),
     account_ref: Type.Optional(RefSchema),
     api_id_env: Type.Optional(env),
+    api_id: Type.Optional(Type.Integer({ minimum: 1, maximum: 2147483647 })),
     api_hash_file: Type.Optional(path),
     session_file: Type.Optional(path),
   },
@@ -64,6 +67,7 @@ export const BridgeConfigSchema = Type.Object(
         enabled: Type.Boolean({ default: false }),
         public_origin: Type.Optional(Type.String({ minLength: 1, maxLength: 2048 })),
         password_hash_file: Type.Optional(path),
+        trusted_proxy_addresses: Type.Array(Type.String({ minLength: 1, maxLength: 64 }), { default: [], maxItems: 16 }),
       },
       { ...object, default: {} },
     ),
@@ -96,7 +100,8 @@ export const BridgeConfigSchema = Type.Object(
           id: RefSchema,
           channel: ChannelSchema,
           account_ref: RefSchema,
-          peer_id_env: env,
+          peer_id_env: Type.Optional(env),
+          peer_id: Type.Optional(Type.String({ minLength: 1, maxLength: 160 })),
           principal_ref: RefSchema,
           enabled: Type.Boolean({ default: true }),
         },
@@ -200,8 +205,9 @@ export function parseConfig(input: unknown): BridgeConfig {
     );
   }
   const config = value;
-  if (config.console.enabled && (!config.console.public_origin || !config.console.password_hash_file)) {
-    throw new ConfigError("Console requires a public origin and administrator password hash reference");
+  if (config.console.trusted_proxy_addresses.some(address => !isIP(address))) throw new ConfigError('Trusted console proxies must be literal IP addresses');
+  if (config.console.enabled && !config.console.public_origin) {
+    throw new ConfigError("Console requires a public origin");
   }
   if (config.console.public_origin) {
     let origin: URL;
@@ -220,8 +226,10 @@ export function parseConfig(input: unknown): BridgeConfig {
     }
   }
   const ids = new Set<string>();
+  if (config.channels.telegram.enabled && !config.channels.telegram.api_id && !config.channels.telegram.api_id_env) throw new ConfigError('Telegram application ID is required');
   const channels = new Set<string>();
   for (const target of config.targets) {
+    if (!target.peer_id && !target.peer_id_env) throw new ConfigError('Target peer is required');
     if (ids.has(target.id)) throw new ConfigError("Target IDs must be unique");
     if (channels.has(target.channel))
       throw new ConfigError("Only one target per channel is supported");

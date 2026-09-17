@@ -17,6 +17,8 @@ import {
   MantineProvider,
   Paper,
   PasswordInput,
+  TextInput,
+  ScrollArea,
   Stack,
   Text,
   Title,
@@ -41,10 +43,10 @@ const CallDetail = lazy(() =>
   import("./calls").then((m) => ({ default: m.CallDetail })),
 );
 const Connections = lazy(() =>
-  import("./configuration").then((m) => ({ default: m.Connections })),
+  import("./connections").then((m) => ({ default: m.Connections })),
 );
 const Settings = lazy(() =>
-  import("./configuration").then((m) => ({ default: m.Settings })),
+  import("./settings").then((m) => ({ default: m.Settings })),
 );
 import "@mantine/core/styles.css";
 import "@mantine/charts/styles.css";
@@ -110,14 +112,16 @@ function App() {
   useEffect(() => {
     if (!session) return;
     const remaining = () => Date.parse(session.expires_at) - Date.now();
-    const expire = () => { if (remaining() <= 0) clear(); };
+    const expire = () => {
+      if (remaining() <= 0) clear();
+    };
     const timer = setTimeout(expire, Math.max(0, remaining()));
-    window.addEventListener('focus', expire);
-    document.addEventListener('visibilitychange', expire);
+    window.addEventListener("focus", expire);
+    document.addEventListener("visibilitychange", expire);
     return () => {
       clearTimeout(timer);
-      window.removeEventListener('focus', expire);
-      document.removeEventListener('visibilitychange', expire);
+      window.removeEventListener("focus", expire);
+      document.removeEventListener("visibilitychange", expire);
     };
   }, [session]);
   useEffect(() => {
@@ -155,6 +159,7 @@ function Login({
   onLogin: (session: ConsoleSession) => void;
   initialError: Error | null;
 }) {
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(initialError);
@@ -194,7 +199,7 @@ function Login({
               try {
                 const value = await api<ConsoleSession>("/session", {
                   method: "POST",
-                  body: JSON.stringify({ password }),
+                  body: JSON.stringify({ username, password }),
                 });
                 setPassword("");
                 onLogin(value);
@@ -202,7 +207,7 @@ function Login({
                 setError(
                   new Error(
                     (e as { status?: number }).status === 401
-                      ? "The password was not accepted. Try again."
+                      ? "The username or password was not accepted. Try again."
                       : (e as Error).message,
                   ),
                 );
@@ -212,15 +217,22 @@ function Login({
             }}
           >
             <Stack>
+              <TextInput
+                label="Username"
+                value={username}
+                onChange={(event) => setUsername(event.currentTarget.value)}
+                autoComplete="username"
+                required
+                autoFocus
+              />
               <PasswordInput
-                label="Console password"
+                label="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="current-password"
                 required
                 minLength={12}
                 maxLength={256}
-                autoFocus
               />
               {error && <Failure error={error} />}
               <Button
@@ -284,26 +296,35 @@ function Shell({ onLogout }: { onLogout: () => Promise<void> }) {
         </Group>
       </AppShell.Header>
       <AppShell.Navbar className="sidebar" p="md">
-        <div className="brand">
-          <Logo />
-        </div>
-        <Text className="eyebrow nav-caption">WORKSPACE</Text>
-        <nav aria-label="Main navigation">
-          {navigation.map(({ to, label, icon: Icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={to === "/"}
-              className={({ isActive }) =>
-                `nav-item ${isActive ? "active" : ""}`
-              }
-            >
-              <Icon size={19} stroke={1.7} />
-              {label}
-            </NavLink>
-          ))}
-        </nav>
-        <div className="sidebar-bottom">
+        <AppShell.Section>
+          <div className="brand">
+            <Logo />
+          </div>
+        </AppShell.Section>
+        <AppShell.Section
+          grow
+          component={ScrollArea}
+          type="auto"
+          className="sidebar-navigation"
+        >
+          <Text className="eyebrow nav-caption">WORKSPACE</Text>
+          <nav aria-label="Main navigation">
+            {navigation.map(({ to, label, icon: Icon }) => (
+              <NavLink
+                key={to}
+                to={to}
+                end={to === "/"}
+                className={({ isActive }) =>
+                  `nav-item ${isActive ? "active" : ""}`
+                }
+              >
+                <Icon size={19} stroke={1.7} />
+                {label}
+              </NavLink>
+            ))}
+          </nav>
+        </AppShell.Section>
+        <AppShell.Section className="sidebar-bottom">
           <Text size="sm" fw={500}>
             Let your agent call you.
           </Text>
@@ -313,6 +334,7 @@ function Shell({ onLogout }: { onLogout: () => Promise<void> }) {
           <Button
             variant="subtle"
             color="gray"
+            c="gray.2"
             fullWidth
             justify="flex-start"
             leftSection={<IconLogout size={17} />}
@@ -322,7 +344,7 @@ function Shell({ onLogout }: { onLogout: () => Promise<void> }) {
           >
             Sign out
           </Button>
-        </div>
+        </AppShell.Section>
       </AppShell.Navbar>
       <AppShell.Main>
         <div className="page">

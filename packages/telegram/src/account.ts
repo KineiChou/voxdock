@@ -3,6 +3,8 @@ import { TelegramClient, Api } from 'teleproto';
 import { LogLevel } from 'teleproto/extensions/Logger.js';
 import { StringSession } from 'teleproto/sessions/index.js';
 
+export class TelegramCleanupError extends Error { constructor() { super('Telegram disconnect could not be confirmed'); } }
+
 export interface TelegramAccountConfig {
   apiId: number;
   apiHash: string;
@@ -23,16 +25,21 @@ export async function authorizeTelegram(config: TelegramAccountConfig, prompts: 
   phoneNumber: () => Promise<string>;
   phoneCode: () => Promise<string>;
   password: () => Promise<string>;
-}): Promise<string> {
+}, signal?: AbortSignal): Promise<string> {
   const client = createClient(config, '');
+  const abort = () => { void client.disconnect().catch(() => {}); };
+  signal?.throwIfAborted();
+  signal?.addEventListener('abort', abort, { once: true });
   try {
     await client.start({ ...prompts, onError: () => { throw new Error('Telegram authorization failed'); } });
+    signal?.throwIfAborted();
     const account = await client.getMe();
     if (!(account instanceof Api.User) || account.bot) throw new Error('A Telegram user account is required');
+    signal?.throwIfAborted();
     await writeFile(config.sessionFile, client.session.save() as unknown as string, { mode: 0o600, flag: 'wx' });
     await chmod(config.sessionFile, 0o600);
     return account.id.toString();
-  } finally { await client.disconnect(); }
+  } finally { signal?.removeEventListener('abort', abort); try { await client.disconnect(); } catch { throw new TelegramCleanupError(); } }
 }
 
 /** Connect an already-provisioned account; ordinary service startup never starts a login flow. */
