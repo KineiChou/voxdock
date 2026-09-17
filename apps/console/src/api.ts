@@ -19,8 +19,8 @@ export function endSession() {
 }
 const friendlyErrors: Record<string, string> = {
   whatsapp_unlink_unconfirmed:
-    "Sign-out could not be confirmed. WhatsApp calling and your receiving number are disabled. Check the connection and retry unlinking.",
-  account_unlink_unavailable:
+    "Sign-out could not be confirmed. Calling is paused and your receiving number is disabled. Check the WhatsApp connection, then restart VoxDock before retrying.",
+  whatsapp_unlink_unavailable:
     "Account unlinking is unavailable. Check the WhatsApp service on your server and try again.",
   target_pairing_not_found:
     "This pairing attempt is no longer available. Start again.",
@@ -77,7 +77,7 @@ const friendlyErrors: Record<string, string> = {
   credentials_required:
     "Add the required credentials before enabling this connection.",
   runtime_apply_failed:
-    "Settings could not be applied. Calling remains paused. Review the configuration and try again.",
+    "Settings could not be applied. Your saved configuration has been retained. Review the configuration and try again.",
   invalid_current_password:
     "The current password was not accepted. Check it and try again.",
 };

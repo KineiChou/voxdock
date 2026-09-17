@@ -14,6 +14,7 @@ import { RuntimeManager } from './runtime-manager.js';
 import { createConnectionService, type ConnectionService } from './connection-service.js';
 import { DomainError } from '@voxdock/core';
 import { TargetPairingService } from './target-pairing-service.js';
+import { unlinkWhatsAppAccount } from './whatsapp-account.js';
 export interface Runtime {
   readyChannels: ReadonlySet<Channel>;
   onCallCreated(call: CallStatus): Promise<void>;
@@ -118,6 +119,7 @@ export async function startService(
     };
     connections = createConnectionService({
       acquire: () => runtime!.acquire(),
+      unlinkWhatsApp: () => unlinkWhatsAppAccount(runtime!, getWhatsAppConfig),
       async getTelegramConfig() {
         const tg = config.channels.telegram;
         const apiId = tg.api_id ?? Number(tg.api_id_env ? process.env[tg.api_id_env] : undefined);

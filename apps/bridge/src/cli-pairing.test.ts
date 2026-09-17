@@ -22,6 +22,7 @@ afterEach(() => rmSync(directory, { recursive: true, force: true }));
 
 it.each([
   { args: ['connection', 'setup', '--channel', 'whatsapp'], path: '/v1/console/connections/whatsapp/setup', method: 'GET', body: undefined },
+  { args: ['connection', 'unlink', '--channel', 'whatsapp'], path: '/v1/console/connections/whatsapp/unlink', method: 'POST', body: {} },
   { args: ['connection', 'target', '--channel', 'telegram'], path: '/v1/console/connections/telegram/target', method: 'POST', body: target, input: true },
   { args: ['target-pair', 'start', '--method', 'message'], path: base, method: 'POST', body: { method: 'message' } },
   { args: ['target-pair', 'start', '--method', 'call'], path: base, method: 'POST', body: { method: 'call' } },
@@ -46,6 +47,7 @@ it.each([
 
 it.each([
   ['connection', 'setup', '--channel', 'telegram'],
+  ['connection', 'unlink', '--channel', 'telegram'],
   ['connection', 'target', '--channel', 'telegram'],
   ['target-pair', 'start', '--method', 'unknown'],
   ['target-pair', 'start', '--method', 'message', '--flow', flow],

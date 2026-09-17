@@ -45,20 +45,31 @@ export class RuntimeManager {
     catch (error) { cleanupUnknown = this.runtime !== undefined; throw error; }
     finally { this.finish(cleanupUnknown); }
   }
-  apply(input: ConsoleConfigurationUpdate) {
+  apply(input: ConsoleConfigurationUpdate, afterCommit?: () => Promise<void>) {
     if (this.busy) return Promise.reject(new DomainError('management_busy', 409));
-    const operation = this.applyChange(input);
+    const operation = this.applyChange(input, afterCommit);
     this.operation = operation;
     return operation.finally(() => { if (this.operation === operation) this.operation = undefined; });
   }
-  private async applyChange(input: ConsoleConfigurationUpdate) {
+  private async applyChange(input: ConsoleConfigurationUpdate, afterCommit?: () => Promise<void>) {
     if (this.closing) throw new DomainError('service_closing', 503);
     if (this.busy) throw new DomainError('management_busy', 409);
     if (this.store.listCalls().some(call => call.state !== 'ended')) throw new DomainError('active_or_uncertain_call', 409);
     const prepared = this.configuration.prepare(input);
     this.claim();
     await this.stop();
-    return this.install(prepared);
+    const applied = await this.install(prepared, !!afterCommit);
+    if (!afterCommit) return applied;
+    try {
+      if (this.closing) throw new DomainError('service_closing', 503);
+      await afterCommit();
+      this.finish();
+      return applied;
+    } catch (error) {
+      // A platform mutation cannot roll back already committed calling restrictions.
+      this.finish(true);
+      throw error;
+    }
   }
   private async stop(): Promise<void> {
     try { await this.runtime?.close(); }
@@ -66,8 +77,9 @@ export class RuntimeManager {
     this.runtime = undefined;
   }
   /** The caller owns the lease and has already stopped the previous runtime. */
-  private async install(prepared: ReturnType<ConfigurationStore['prepare']>) {
+  private async install(prepared: ReturnType<ConfigurationStore['prepare']>, retainLease = false) {
     let cleanupUnknown = false;
+    let installed = false;
     let candidate: Runtime | undefined;
     try {
       if (this.closing) throw new DomainError('service_closing', 503);
@@ -78,6 +90,7 @@ export class RuntimeManager {
       if (!prepared.config.backend) delete this.config.backend;
       this.store.setTranscriptCapture(this.config.records.transcript_retention_days > 0);
       this.runtime = candidate;
+      installed = true;
       return this.configuration.view();
     } catch {
       try { await candidate?.close(); }
@@ -85,7 +98,7 @@ export class RuntimeManager {
       if (!this.closing) { try { await this.start(); } catch { cleanupUnknown = this.runtime !== undefined; } }
       if (this.closing) throw new DomainError('service_closing', 503);
       throw new DomainError('runtime_apply_failed', 503);
-    } finally { this.finish(cleanupUnknown); }
+    } finally { if (!installed || !retainLease) this.finish(cleanupUnknown); }
   }
   acquire(): Promise<(safe: boolean, update?: ConsoleConfigurationUpdate) => Promise<void>> {
     if (this.busy) return Promise.reject(new DomainError('management_busy', 409));

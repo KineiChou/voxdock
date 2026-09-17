@@ -10,6 +10,7 @@ export interface ConnectionDependencies {
   acquire(): Promise<(safe: boolean) => Promise<void>>;
   getTelegramConfig(): Promise<TelegramAccountConfig>;
   getWhatsAppConfig(): Promise<WhatsAppConnectionConfig>;
+  unlinkWhatsApp?(): Promise<{ unlinked: true }>;
   telegramAuthorize?: typeof authorizeTelegram;
   fetch?: typeof fetch;
   ttlMs?: number;
@@ -143,6 +144,13 @@ export function createConnectionService(dependencies: ConnectionDependencies) {
       return { ...flow.view };
     },
     cancel,
+    async unlinkWhatsApp(): Promise<{ unlinked: true }> {
+      if (acquiring || (current && !terminal(current))) throw new ConnectionError('connection_operation_active');
+      if (!dependencies.unlinkWhatsApp) throw new ConnectionError('whatsapp_unlink_unavailable', 503);
+      acquiring = true;
+      try { return await dependencies.unlinkWhatsApp(); }
+      finally { acquiring = false; }
+    },
     async disconnect(channel: ConnectionFlow['channel']): Promise<{ disconnected: true }> {
       if (acquiring || (current && !terminal(current))) throw new ConnectionError('connection_operation_active');
       acquiring = true;

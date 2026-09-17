@@ -57,14 +57,16 @@ export class TargetPairingService {
     const snapshot = this.dependencies.configuration();
     const target = snapshot.settings.targets.find(target => target.channel === 'whatsapp');
     const targetPhone = target ? phoneLabel(target.peer_id) : null;
-    const result: WhatsAppSetup = { available: snapshot.deployment.whatsapp_available, connected: false, account_phone: null,
+    const result: WhatsAppSetup = { available: snapshot.deployment.whatsapp_available, linked: false, unlink_pending: false, connected: false, account_phone: null,
       target: target && targetPhone ? { phone: targetPhone, enabled: target.enabled } : null, pairing_available: false };
     if (!result.available) return result;
     try {
       const wa = new WhatsAppConnection(await this.dependencies.getWhatsAppConfig(), this.dependencies.fetch);
       const session = await wa.request('status');
+      result.linked = session.paired;
+      result.unlink_pending = session.state === 'unlink_recovery_required';
       result.connected = session.paired && session.state === 'open';
-      result.account_phone = result.connected ? session.phone ?? null : null;
+      result.account_phone = result.linked ? session.phone ?? null : null;
       result.pairing_available = result.connected && result.account_phone !== null;
     } catch { /* Status reads never reset or reconnect an account. */ }
     return result;
