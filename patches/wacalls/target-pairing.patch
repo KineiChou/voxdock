@@ -48,7 +48,7 @@ index 7ef6fea..a131ad4 100644
  	mux.HandleFunc("POST /api/voxdock/sessions/{sid}/connect", s.handleConnectionConnect)
  	mux.HandleFunc("POST /api/voxdock/sessions/{sid}/disconnect", s.handleConnectionDisconnect)
 diff --git a/cmd/server/session.go b/cmd/server/session.go
-index f81b574..f95cf80 100644
+index f81b574..eba0ab1 100644
 --- a/cmd/server/session.go
 +++ b/cmd/server/session.go
 @@ -2,6 +2,7 @@ package main
@@ -83,19 +83,33 @@ index f81b574..f95cf80 100644
  	if err := cm.StartCall(ctx, callID, peer, isVideo); err != nil {
  		s.removeCall(callID)
  		return "", err
-@@ -115,6 +124,11 @@ func (s *Session) callForEvent(from types.JID, data *waBinary.Node) (*activeCall
+@@ -115,16 +124,25 @@ func (s *Session) callForEvent(from types.JID, data *waBinary.Node) (*activeCall
  }
  
  func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
 +	s.mu.Lock()
-+	defer s.mu.Unlock()
 +	if s.consumeTargetCall(ctx, evt) {
++		s.mu.Unlock()
 +		return
 +	}
  	node := wrapCall(evt.From, evt.Data)
  	callID := callIDFromNode(node)
  	if callID == "" {
-@@ -139,7 +153,7 @@ func (s *Session) rejectOffer(ctx context.Context, node *waBinary.Node, from typ
++		s.mu.Unlock()
+ 		return
+ 	}
+ 	if max := s.mgr.maxCalls; max > 0 && s.reg.count() >= max {
++		s.mu.Unlock()
+ 		s.rejectOffer(ctx, node, evt.From)
+ 		return
+ 	}
+ 	cm := s.createCall(callID)
++	// Registry reservation prevents arming; callbacks and network I/O need no session lock.
++	s.mu.Unlock()
+ 	cm.HandleCallOffer(ctx, node, evt.From)
+ }
+ 
+@@ -139,7 +157,7 @@ func (s *Session) rejectOffer(ctx context.Context, node *waBinary.Node, from typ
  	}
  	reject := signaling.BuildRejectStanza(from, info.CallID, wanode.MustJID(creator))
  	_ = wa.NewSocket(s.client).SendNode(ctx, reject)
@@ -104,7 +118,7 @@ index f81b574..f95cf80 100644
  }
  
  func (s *Session) handleEvent(rawEvt any) {
-@@ -151,9 +165,13 @@ func (s *Session) handleEvent(rawEvt any) {
+@@ -151,9 +169,13 @@ func (s *Session) handleEvent(rawEvt any) {
  		}
  		s.setAuth(AuthSnapshot{State: "open", Paired: true})
  	case *events.Disconnected:
@@ -118,7 +132,7 @@ index f81b574..f95cf80 100644
  	case *events.CallOffer:
  		s.onIncomingOffer(ctx, evt)
  	case *events.CallAccept:
-@@ -282,6 +300,7 @@ func (s *Session) teardownAllCalls() {
+@@ -282,6 +304,7 @@ func (s *Session) teardownAllCalls() {
  }
  
  func (s *Session) replaceClient(client *whatsmeow.Client) {
@@ -126,7 +140,7 @@ index f81b574..f95cf80 100644
  	s.teardownAllCalls()
  	s.client.Disconnect()
  	s.client = client
-@@ -289,6 +308,7 @@ func (s *Session) replaceClient(client *whatsmeow.Client) {
+@@ -289,6 +312,7 @@ func (s *Session) replaceClient(client *whatsmeow.Client) {
  }
  
  func (s *Session) shutdown() {
@@ -136,10 +150,10 @@ index f81b574..f95cf80 100644
  }
 diff --git a/cmd/server/targetpairing.go b/cmd/server/targetpairing.go
 new file mode 100644
-index 0000000..2622c61
+index 0000000..6c7a0a3
 --- /dev/null
 +++ b/cmd/server/targetpairing.go
-@@ -0,0 +1,235 @@
+@@ -0,0 +1,275 @@
 +package main
 +
 +import (
@@ -208,7 +222,7 @@ index 0000000..2622c61
 +}
 +func (s *Session) observeTargetLocked(ctx context.Context, jid types.JID, timestamp time.Time) {
 +	p := s.target
-+	if p == nil || p.State != "waiting" || timestamp.Before(p.armedAt) || timestamp.After(time.Now().Add(5*time.Second)) {
++	if p == nil || p.State != "waiting" || timestamp.Before(p.armedAt.Truncate(time.Second)) || timestamp.After(time.Now().Add(5*time.Second)) {
 +		return
 +	}
 +	phone := targetPhone(ctx, jid, s.client.Store.LIDs)
@@ -224,7 +238,7 @@ index 0000000..2622c61
 +	p.code = ""
 +}
 +
-+// Only ordinary text is eligible. Reflection rejects any additional payload field.
++// Accept a single plain text payload and explicitly allowlisted transport metadata.
 +func plainTargetText(evt *events.Message) string {
 +	if evt == nil || evt.Message == nil || evt.SourceWebMsg != nil || evt.UnavailableRequestID != "" || evt.RetryCount != 0 || evt.NewsletterMeta != nil || evt.IsEphemeral || evt.IsViewOnce || evt.IsViewOnceV2 || evt.IsViewOnceV2Extension || evt.IsDocumentWithCaption || evt.IsLottieSticker || evt.IsBotInvoke || evt.IsEdit {
 +		return ""
@@ -239,33 +253,73 @@ index 0000000..2622c61
 +	if i.Chat.ToNonAD() != i.Sender.ToNonAD() {
 +		return ""
 +	}
-+	text := ""
-+	valid := true
-+	evt.Message.ProtoReflect().Range(func(f protoreflect.FieldDescriptor, v protoreflect.Value) bool {
-+		if string(f.Name()) == "conversation" {
-+			text = v.String()
-+		} else {
-+			valid = false
-+		}
-+		return true
-+	})
-+	if !valid || len(evt.Message.ProtoReflect().GetUnknown()) != 0 {
-+		return ""
-+	}
-+	if evt.RawMessage != nil && !textOnlyRaw(evt.RawMessage.ProtoReflect()) {
++	text := targetPayloadText(evt.Message.ProtoReflect())
++	if evt.RawMessage != nil && targetPayloadText(evt.RawMessage.ProtoReflect()) != text {
 +		return ""
 +	}
 +	return text
 +}
-+func textOnlyRaw(m protoreflect.Message) bool {
-+	valid := len(m.GetUnknown()) == 0
++func onlyFields(m protoreflect.Message, allowed ...string) bool {
++	if len(m.GetUnknown()) != 0 {
++		return false
++	}
++	valid := true
 +	m.Range(func(f protoreflect.FieldDescriptor, v protoreflect.Value) bool {
-+		if string(f.Name()) != "conversation" {
++		found := false
++		for _, name := range allowed {
++			if string(f.Name()) == name {
++				found = true
++				break
++			}
++		}
++		if !found {
 +			valid = false
 +		}
-+		return true
++		return valid
 +	})
 +	return valid
++}
++func targetPayloadText(m protoreflect.Message) string {
++	if !onlyFields(m, "conversation", "extendedTextMessage", "messageContextInfo") {
++		return ""
++	}
++	text := ""
++	payloads := 0
++	valid := true
++	m.Range(func(f protoreflect.FieldDescriptor, v protoreflect.Value) bool {
++		switch string(f.Name()) {
++		case "conversation":
++			payloads++
++			text = v.String()
++		case "extendedTextMessage":
++			payloads++
++			ext := v.Message()
++			if !onlyFields(ext, "text", "contextInfo") {
++				valid = false
++				break
++			}
++			text = ext.Get(ext.Descriptor().Fields().ByName("text")).String()
++			contextField := ext.Descriptor().Fields().ByName("contextInfo")
++			if ext.Has(contextField) && !onlyFields(ext.Get(contextField).Message(), "expiration", "ephemeralSettingTimestamp", "ephemeralSharedSecret") {
++				valid = false
++			}
++		case "messageContextInfo":
++			info := v.Message()
++			if !onlyFields(info, "deviceListMetadata", "deviceListMetadataVersion", "messageSecret", "paddingBytes", "reportingTokenVersion") {
++				valid = false
++				break
++			}
++			devices := info.Descriptor().Fields().ByName("deviceListMetadata")
++			if info.Has(devices) && !onlyFields(info.Get(devices).Message(), "senderKeyHash", "senderTimestamp", "senderKeyIndexes", "senderAccountType", "receiverAccountType", "recipientKeyHash", "recipientTimestamp", "recipientKeyIndexes") {
++				valid = false
++			}
++		}
++		return valid
++	})
++	if !valid || payloads != 1 {
++		return ""
++	}
++	return text
 +}
 +func (s *Session) observeTargetMessage(evt *events.Message) {
 +	s.mu.Lock()
@@ -377,10 +431,10 @@ index 0000000..2622c61
 +}
 diff --git a/cmd/server/targetpairing_test.go b/cmd/server/targetpairing_test.go
 new file mode 100644
-index 0000000..2259359
+index 0000000..1faa764
 --- /dev/null
 +++ b/cmd/server/targetpairing_test.go
-@@ -0,0 +1,153 @@
+@@ -0,0 +1,215 @@
 +package main
 +
 +import (
@@ -532,5 +586,67 @@ index 0000000..2259359
 +	s.shutdown()
 +	if s.target.State != "cancelled" {
 +		t.Fatal("shutdown left observer")
++	}
++}
++func TestTargetTextTransportMetadata(t *testing.T) {
++	code := "VOX-012345ABCDEF"
++	metadata := &waE2E.MessageContextInfo{DeviceListMetadata: &waE2E.DeviceListMetadata{SenderTimestamp: proto.Uint64(123)}, DeviceListMetadataVersion: proto.Int32(2), MessageSecret: []byte{1, 2, 3}, ReportingTokenVersion: proto.Int32(1)}
++	for _, extended := range []bool{false, true} {
++		e := pairingMessage("1234567890", code)
++		e.Message.MessageContextInfo = metadata
++		if extended {
++			e.Message.Conversation = nil
++			e.Message.ExtendedTextMessage = &waE2E.ExtendedTextMessage{Text: proto.String(code), ContextInfo: &waE2E.ContextInfo{Expiration: proto.Uint32(0), EphemeralSettingTimestamp: proto.Int64(123)}}
++		}
++		e.RawMessage = proto.Clone(e.Message).(*waE2E.Message)
++		if plainTargetText(e) != code {
++			t.Fatal("ordinary text transport metadata rejected")
++		}
++	}
++	for name, modify := range map[string]func(*waE2E.Message){
++		"quote": func(m *waE2E.Message) {
++			m.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{QuotedMessage: &waE2E.Message{Conversation: proto.String(code)}}
++		},
++		"forward": func(m *waE2E.Message) {
++			m.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{IsForwarded: proto.Bool(true)}
++		},
++		"forward score": func(m *waE2E.Message) {
++			m.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{ForwardingScore: proto.Uint32(1)}
++		},
++		"bot":     func(m *waE2E.Message) { m.MessageContextInfo = &waE2E.MessageContextInfo{BotMessageSecret: []byte{1}} },
++		"mixed":   func(m *waE2E.Message) { m.Conversation = proto.String(code) },
++		"preview": func(m *waE2E.Message) { m.ExtendedTextMessage.Title = proto.String("title") },
++		"unknown": func(m *waE2E.Message) { m.ExtendedTextMessage.ProtoReflect().SetUnknown([]byte{0xf8, 0x07, 0x01}) },
++	} {
++		t.Run(name, func(t *testing.T) {
++			e := pairingMessage("1234567890", code)
++			e.Message = &waE2E.Message{ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String(code)}}
++			modify(e.Message)
++			if plainTargetText(e) != "" {
++				t.Fatal("nonordinary payload accepted")
++			}
++		})
++	}
++}
++func TestTargetProviderTimestampPrecision(t *testing.T) {
++	for _, method := range []string{"message", "call"} {
++		for _, secondsAgo := range []int{0, 1} {
++			mgr := newTestManager(t)
++			s := mgr.addUnconnected(t, "test")
++			armTestTarget(s, method)
++			// Whatsmeow decodes both event timestamps from seconds with UnixTime("t").
++			s.target.armedAt = time.Now().Truncate(time.Second).Add(500 * time.Millisecond)
++			timestamp := s.target.armedAt.Truncate(time.Second).Add(-time.Duration(secondsAgo) * time.Second)
++			if method == "message" {
++				e := pairingMessage("1234567890", s.target.code)
++				e.Info.Timestamp = timestamp
++				s.observeTargetMessage(e)
++			} else {
++				s.onIncomingOffer(context.Background(), &events.CallOffer{BasicCallMeta: types.BasicCallMeta{From: types.NewJID("1234567890", types.DefaultUserServer), Timestamp: timestamp}})
++			}
++			if (s.target.Candidate != nil) != (secondsAgo == 0) {
++				t.Fatalf("%s: incorrect precision boundary", method)
++			}
++		}
 +	}
 +}

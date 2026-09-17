@@ -33,12 +33,16 @@ Only the first eligible candidate is retained. Read and receive operations enfor
 expiry. Cancellation, disconnect, client replacement and shutdown clear observation.
 A shared session mutex serializes observation, cancellation, expiry and call creation.
 
-Message verification accepts only an exact ordinary `conversation` text payload
-from a direct incoming message. Other protobuf payload fields, wrappers, edits,
+Message verification accepts an exact ordinary `conversation` or plain
+`extendedTextMessage.text` payload from a direct incoming message. Known device,
+reporting-token and padding transport metadata is allowlisted. Extended-text
+context permits only expiry/settings metadata; quoted and forwarded content is
+rejected. Other protobuf payload fields, wrappers, edits,
 bot metadata, history/sync/unavailable replays, retry deliveries, groups,
-broadcasts, status, own messages and timestamps preceding arming are ignored.
-Formatted/extended-text payloads are deliberately ineligible; send the code as a
-new plain text message. Neither ordinary messages nor codes are returned, stored
+broadcasts, status, own messages and timestamps preceding the arming second are ignored.
+Provider timestamps have one-second precision. The random message code and explicit
+confirmation remain required; timestamps alone do not authorize a target. Send
+the code as a new plain text message, without quoting, forwarding or previews. Neither ordinary messages nor codes are returned, stored
 in the database, or emitted on SSE. The observer does not add payload logging.
 
 Phone identity comes from an authenticated phone JID or the authenticated
@@ -67,3 +71,37 @@ and `go test ./internal/voip/call` passed. The full server suite could not compl
 inside the restricted sandbox because existing media/WebRTC tests require local
 TCP/UDP listeners. CI retains full tests and race checks. Shell syntax and
 `git diff --check` passed.
+
+## Compatibility correction (2026-09-17)
+
+Review found two defects before real-account acceptance: conversation-only
+protobuf filtering rejected legitimate transport metadata and plain extended
+text; nanosecond arming comparisons rejected messages/calls stamped in the arming
+second. These could prevent a legitimate user from producing a candidate.
+
+Evidence is from the pinned whatsmeow module
+`v0.0.0-20260622185415-5f04eac6dbbb`: `send.go:234–244` inserts a message secret
+when reporting tokens are enabled, `reportingtoken.go:39–47` includes ordinary
+text, and `send.go:921` classifies conversation and extended text as text.
+`proto/waE2E/WAWebProtobufsE2E.pb.go` defines the explicit transport/context fields.
+`message.go:216` and `call.go:29` decode `UnixTime("t")`;
+`binary/attrs.go:116–123` implements this as `time.Unix(seconds, 0)`.
+
+The correction allowlists the known metadata fields without returning or logging
+their values, still rejects quoted/forwarded/bot/media/unknown protobuf content,
+and compares received timestamps to the arming second. Synthetic tests cover both
+text representations with transport metadata, forbidden context/payloads, and
+same-second versus prior-second messages and calls. Actual phone interoperability
+remains unverified.
+
+Lock review found existing incoming/state callbacks use the call registry and
+broker without reacquiring the session mutex. The normal offer path now releases
+the session mutex after its registry reservation and before callbacks/network I/O;
+the reserved call still prevents observer arming. Observer rejection remains
+bounded and serialized with cancellation.
+
+Follow-up verification: fresh pinned-source patch application passed; targeted
+observer/connection race tests passed. Full `go test -race ./cmd/server
+./internal/voip/call` passed with local listener access enabled for synthetic
+media tests, resolving the earlier sandbox-only verification limitation. No
+account credentials, external platform calls or paid services were used.
