@@ -92,6 +92,26 @@ it('expires authenticated sessions after eight hours', async () => {
   vi.setSystemTime(Date.now() + 8 * 60 * 60 * 1000 + 1000);
   expect((await app.inject({ url: '/admin/v1/session', headers: { cookie } })).statusCode).toBe(401);
 });
+it('serves the same voice and language choices behind both authentication boundaries', async () => {
+  const { app, login } = await setup();
+  for (const url of ['/admin/v1/settings/options', '/v1/console/settings/options']) {
+    expect((await app.inject(url)).statusCode).toBe(401);
+  }
+  const { cookie } = await login();
+  const admin = await app.inject({ url: '/admin/v1/settings/options', headers: { cookie } });
+  const bearer = await app.inject({ url: '/v1/console/settings/options', headers: { authorization: `Bearer ${token}` } });
+  expect(admin.statusCode).toBe(200);
+  expect(bearer.json()).toEqual(admin.json());
+  expect(admin.headers['cache-control']).toContain('no-store');
+  expect(admin.json()).toMatchObject({
+    voices: expect.arrayContaining([{ value: 'marin', label: 'Marin (default)' }]),
+    languages: expect.arrayContaining([{ value: 'ja', label: 'Japanese · 日本語' }]),
+    allow_custom_voice: true, allow_custom_language: true,
+  });
+  for (const choices of [admin.json().voices, admin.json().languages]) {
+    expect(new Set(choices.map((choice: { value: string }) => choice.value)).size).toBe(choices.length);
+  }
+});
 it('bounds simultaneous expensive password checks', async () => {
   const { app } = await setup();
   const responses = await Promise.all([1, 2].map(() => app.inject({ method: 'POST', url: '/admin/v1/session', headers: { origin }, payload: { password } })));

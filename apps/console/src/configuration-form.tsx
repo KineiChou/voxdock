@@ -48,9 +48,12 @@ export function useConfigurationForm(initial: ConsoleConfigurationView) {
       setSettings(structuredClone(next.settings));
       setSecrets({});
       setSaved(true);
+      queryClient.setQueryData(["/settings/configuration"], next);
       await queryClient.invalidateQueries();
+      return true;
     } catch (error) {
       setError(error as Error);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -77,6 +80,8 @@ export function useConfigurationForm(initial: ConsoleConfigurationView) {
     settings,
     update,
     busy,
+    error,
+    reload,
     secret: (key: ConfigurationSecret, label: string) => (
       <PasswordInput
         label={label}

@@ -27,7 +27,7 @@ const help = `VoxDock commands:
   overview [--days 1|7|30]
   calls [--limit N --cursor CURSOR --channel CHANNEL --direction DIRECTION --state STATE --from UTC_ISO --to UTC_ISO]
   connections
-  settings
+  settings [options]
   configuration [--file PRIVATE_JSON]
   connection connect|disconnect --channel telegram|whatsapp [--input-file PRIVATE_JSON]
   connection unlink --channel whatsapp
@@ -150,11 +150,13 @@ export async function runCli(
     command === "end" ||
     command === "reconcile" ||
     command === "audit" ||
-    command === "console" || command === 'connection' || command === 'target-pair'
+    command === "console" || command === 'connection' || command === 'target-pair' || command === 'settings'
       ? 2
       : 1;
   if (positionals.length > expected + (command === "status" ? 1 : 0))
     throw new CliError("invalid_arguments");
+  if (command === 'settings' && positionals[1] !== undefined && positionals[1] !== 'options')
+    throw new CliError('invalid_arguments');
   if (command === "init") {
     if (!positionals[1]) throw new CliError("directory_required");
     write(
@@ -274,7 +276,8 @@ export async function runCli(
   }
   if (["overview", "calls", "connections", "settings"].includes(command)) {
     const query = new URLSearchParams(Object.entries(values).filter(([key]) => key !== "config"));
-    output(await request(`/v1/console/${command}${query.size ? `?${query}` : ""}`));
+    const resource = command === 'settings' && positionals[1] === 'options' ? 'settings/options' : command;
+    output(await request(`/v1/console/${resource}${query.size ? `?${query}` : ""}`));
     return;
   }
   if (command === "call") {

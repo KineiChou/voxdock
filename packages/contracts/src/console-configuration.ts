@@ -1,6 +1,14 @@
 import { Type, type Static } from '@sinclair/typebox';
 
 const strict = { additionalProperties: false };
+const settingOption = Type.Object({ value: Type.String(), label: Type.String() }, strict);
+export const ConsoleSettingsOptionsSchema = Type.Object({
+  voices: Type.Array(settingOption),
+  languages: Type.Array(settingOption),
+  allow_custom_voice: Type.Boolean(),
+  allow_custom_language: Type.Boolean(),
+}, strict);
+export type ConsoleSettingsOptions = Static<typeof ConsoleSettingsOptionsSchema>;
 const ref = Type.String({ minLength: 1, maxLength: 200, pattern: '^[A-Za-z0-9][A-Za-z0-9_.:/-]*$' });
 export const ConsoleConfigurationSchema = Type.Object({
   calling: Type.Object({
