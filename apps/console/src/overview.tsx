@@ -18,7 +18,6 @@ import type {
   ConsoleSettings,
 } from "../../../packages/contracts/src/console";
 import { useResource } from "./api";
-import { CallingControl } from "./calling-control";
 import {
   CallsTable,
   Failure,
@@ -39,7 +38,7 @@ export function Overview() {
       <PageTitle
         title="Overview"
         description="A clear view of your calls, conversations, and delegated work."
-        action={settings.data && <CallingControl settings={settings.data} />}
+        action={settings.data && <Status value={settings.data.calling.status} />}
       />
       <Group justify="space-between" mb="lg">
         <div>

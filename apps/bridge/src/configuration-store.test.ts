@@ -225,3 +225,22 @@ it('rejects an unsafe late release without writing recovery state after shutdown
   await expect(release(false)).rejects.toMatchObject({ code: 'service_closing' });
   expect(paused).not.toHaveBeenCalled();
 });
+
+it('prevents late cleanup from writing after shutdown detaches the store', async () => {
+  let rejectCandidate!: (reason: Error) => void, starts = 0;
+  const f = setup(async () => {
+    if (++starts === 2) return new Promise((_resolve, reject) => { rejectCandidate = reject; });
+    return { readyChannels: new Set(), onCallCreated: async () => {}, onEnd: async () => {}, onResult: async () => {}, close: async () => {} };
+  });
+  await f.manager.start();
+  const release = await f.manager.acquire();
+  const applying = release(true, { expected_revision: 0, settings: f.configuration.view().settings });
+  const rejected = expect(applying).rejects.toMatchObject({ code: 'service_closing' });
+  f.manager.beginShutdown();
+  f.store.setPaused(true);
+  f.manager.detachStore();
+  const paused = vi.spyOn(f.store, 'setPaused');
+  rejectCandidate(new Error('late failure')); await rejected;
+  expect(paused).not.toHaveBeenCalled();
+  expect(f.configuration.view().revision).toBe(0);
+});

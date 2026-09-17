@@ -10,6 +10,7 @@ export class RuntimeManager {
   private resumeAdmission: (() => void) | undefined;
   private runtime: Runtime | undefined;
   private closing = false;
+  private closed = false;
   private starting: Promise<void> | undefined;
   private operation: Promise<unknown> | undefined;
   constructor(readonly config: BridgeConfig, private readonly store: CallStore, private readonly directory: string, private readonly factory: RuntimeFactory, readonly configuration: ConfigurationStore) {}
@@ -32,6 +33,7 @@ export class RuntimeManager {
     this.resumeAdmission = this.store.suspendAdmission();
   }
   private finish(cleanupUnknown = false): void {
+    if (this.closed) return;
     this.busy = cleanupUnknown;
     if (cleanupUnknown) { this.store.setPaused(true); return; }
     this.resumeAdmission?.();
@@ -106,7 +108,12 @@ export class RuntimeManager {
     };
   }
   private async releaseLease(safe: boolean, update?: ConsoleConfigurationUpdate): Promise<void> {
-    if (this.closing) throw new DomainError('service_closing', 503);
+    if (this.closed) throw new DomainError('service_closing', 503);
+    if (this.closing) {
+      this.finish(!safe);
+      if (update) throw new DomainError('service_closing', 503);
+      return;
+    }
     if (!safe) { this.finish(true); return; }
     if (update) {
       let prepared: ReturnType<ConfigurationStore['prepare']>;
@@ -123,10 +130,15 @@ export class RuntimeManager {
   onCallCreated: Runtime['onCallCreated'] = async call => { if (!this.runtime || this.busy) throw new DomainError('management_busy', 409); await this.runtime.onCallCreated(call); };
   onEnd: Runtime['onEnd'] = async call => { await this.runtime?.onEnd(call); };
   onResult: Runtime['onResult'] = async result => { await this.runtime?.onResult(result); };
+  beginShutdown(): void { this.closing = true; }
+  /** Prevent late bounded-shutdown callbacks from touching a closed database. */
+  detachStore(): void { this.closing = true; this.closed = true; }
   async close(): Promise<void> {
-    this.closing = true;
-    await this.operation?.catch(() => {});
-    await this.starting?.catch(() => {});
-    await this.stop();
+    this.beginShutdown();
+    try {
+      await this.operation?.catch(() => {});
+      await this.starting?.catch(() => {});
+      await this.stop();
+    } finally { this.closed = true; }
   }
 }

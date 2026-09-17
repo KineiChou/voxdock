@@ -31,6 +31,11 @@ const help = `VoxDock commands:
   configuration [--file PRIVATE_JSON]
   connection connect|disconnect --channel telegram|whatsapp [--input-file PRIVATE_JSON]
   connection status|code|password|cancel --flow ID [--input-file PRIVATE_JSON]
+  connection setup --channel whatsapp
+  connection target --channel telegram --input-file PRIVATE_JSON
+  target-pair start --method message|call
+  target-pair status|cancel --flow ID
+  target-pair confirm --flow ID --candidate ID
   console password --password-file PRIVATE_FILE --out NEW_HASH_FILE
   console recover --config FILE [--username NAME --password-file PRIVATE_FILE --allow-remote true|false]
   call --target ID --context-ref REF --correlation-ref REF --key KEY --expires-at UTC_ISO
@@ -42,7 +47,7 @@ const help = `VoxDock commands:
   cleanup
 All commands except init and console password accept --config FILE (default ./voxdock.config.json).
 Offline resume, reconcile and cleanup require the service to be stopped.
-Console recovery also requires the service to be stopped. Configuration changes pause new calls.
+Console recovery also requires the service to be stopped. Configuration changes temporarily block new calls.
 Console password writes a new private hash file; configure its reference and restart to apply it.
 `;
 function argumentsOf(args: string[]) {
@@ -109,6 +114,7 @@ export async function runCli(
     settings: ["config"],
     configuration: ["config", "file"],
     connection: ["config", "channel", "flow", "input-file"],
+    'target-pair': ['config', 'method', 'flow', 'candidate'],
     console: ["config", "username", "password-file", "out", "allow-remote"],
     call: [
       "config",
@@ -142,7 +148,7 @@ export async function runCli(
     command === "end" ||
     command === "reconcile" ||
     command === "audit" ||
-    command === "console" || command === 'connection'
+    command === "console" || command === 'connection' || command === 'target-pair'
       ? 2
       : 1;
   if (positionals.length > expected + (command === "status" ? 1 : 0))
@@ -203,7 +209,10 @@ export async function runCli(
   if (command === 'connection') {
     const action = positionals[1];
     const body: unknown = values['input-file'] ? JSON.parse(readPrivateText(values['input-file'])) : {};
-    if (action === 'connect' || action === 'disconnect') {
+    if (action === 'setup' || action === 'target') {
+      if (values.flow || values.channel !== (action === 'setup' ? 'whatsapp' : 'telegram') || (action === 'setup' && values['input-file']) || (action === 'target' && !values['input-file'])) throw new CliError('invalid_arguments');
+      output(await request(`/v1/console/connections/${values.channel}/${action}`, action === 'setup' ? {} : { method: 'POST', body, timeoutMs: 45000 }));
+    } else if (action === 'connect' || action === 'disconnect') {
       const channel = required(values, 'channel');
       if (!['telegram', 'whatsapp'].includes(channel) || values.flow) throw new CliError('invalid_arguments');
       output(await request(`/v1/console/connections/${channel}/${action === 'connect' && channel === 'telegram' ? 'login' : action}`, { method: 'POST', body, timeoutMs: 45000 }));
@@ -211,6 +220,21 @@ export async function runCli(
       if (values.channel) throw new CliError('invalid_arguments');
       const flow = ref(required(values, 'flow'));
       output(await request(`/v1/console/connections/flows/${encodeURIComponent(flow)}${action === 'status' ? '' : '/' + action}`, action === 'status' ? {} : { method: 'POST', body, timeoutMs: 45000 }));
+    } else throw new CliError('invalid_arguments');
+    return;
+  }
+  if (command === 'target-pair') {
+    const action = positionals[1];
+    const base = '/v1/console/connections/whatsapp/target-pairings';
+    if (action === 'start') {
+      if (!['message', 'call'].includes(values.method ?? '') || values.flow || values.candidate) throw new CliError('invalid_arguments');
+      output(await request(base, { method: 'POST', body: { method: values.method }, timeoutMs: 45000 }));
+    } else if (action && ['status', 'confirm', 'cancel'].includes(action)) {
+      const flow = ref(required(values, 'flow'));
+      if (values.method || (action !== 'confirm' && values.candidate)) throw new CliError('invalid_arguments');
+      output(await request(`${base}/${encodeURIComponent(flow)}${action === 'status' ? '' : '/' + action}`, action === 'status' ? {} : {
+        method: 'POST', body: action === 'confirm' ? { candidate_id: ref(required(values, 'candidate')) } : {}, timeoutMs: 45000,
+      }));
     } else throw new CliError('invalid_arguments');
     return;
   }
