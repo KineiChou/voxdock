@@ -16,8 +16,8 @@ export class RuntimeManager {
     if (this.closing) throw new DomainError('service_closing', 503);
     this.starting = (async () => {
       const next = await this.factory({ config: structuredClone(this.config), store: this.store, configDirectory: this.directory });
-      if (this.closing) { await next.close(); return; }
       this.runtime = next;
+      if (this.closing) await this.stop();
     })();
     try { await this.starting; } finally { this.starting = undefined; }
   }
@@ -42,13 +42,20 @@ export class RuntimeManager {
     if (this.store.listCalls().some(call => call.state !== 'ended')) throw new DomainError('active_or_uncertain_call', 409);
     const prepared = this.configuration.prepare(input);
     this.claim();
-    let stopped = false;
+    await this.stop();
+    return this.install(prepared);
+  }
+  private async stop(): Promise<void> {
+    try { await this.runtime?.close(); }
+    catch { throw new DomainError('runtime_stop_failed', 503); }
+    this.runtime = undefined;
+  }
+  /** The caller owns the lease and has already stopped the previous runtime. */
+  private async install(prepared: ReturnType<ConfigurationStore['prepare']>) {
     let cleanupUnknown = false;
     let candidate: Runtime | undefined;
     try {
-      try { await this.runtime?.close(); }
-      catch { cleanupUnknown = true; throw new DomainError('runtime_stop_failed', 503); }
-      this.runtime = undefined; stopped = true;
+      if (this.closing) throw new DomainError('service_closing', 503);
       candidate = await this.factory({ config: prepared.config, store: this.store, configDirectory: this.directory });
       if (this.closing) throw new DomainError('service_closing', 503);
       prepared.commit();
@@ -57,27 +64,49 @@ export class RuntimeManager {
       this.store.setTranscriptCapture(this.config.records.transcript_retention_days > 0);
       this.runtime = candidate;
       return this.configuration.view();
-    } catch (error) {
-      if (stopped) {
-        try { await candidate?.close(); }
-        catch { this.runtime = candidate; cleanupUnknown = true; throw new DomainError('runtime_stop_failed', 503); }
-        try { await this.start(); } catch { this.runtime = undefined; }
-        throw new DomainError('runtime_apply_failed', 503);
-      }
-      throw error;
+    } catch {
+      try { await candidate?.close(); }
+      catch { this.runtime = candidate; cleanupUnknown = true; throw new DomainError('runtime_stop_failed', 503); }
+      if (!this.closing) { try { await this.start(); } catch { cleanupUnknown = this.runtime !== undefined; } }
+      if (this.closing) throw new DomainError('service_closing', 503);
+      throw new DomainError('runtime_apply_failed', 503);
     } finally { this.busy = cleanupUnknown; }
   }
-  async acquire(): Promise<(safe: boolean) => Promise<void>> {
+  acquire(): Promise<(safe: boolean, update?: ConsoleConfigurationUpdate) => Promise<void>> {
+    if (this.busy) return Promise.reject(new DomainError('management_busy', 409));
+    const operation = this.acquireLease();
+    this.operation = operation;
+    return operation.finally(() => { if (this.operation === operation) this.operation = undefined; });
+  }
+  private async acquireLease(): Promise<(safe: boolean, update?: ConsoleConfigurationUpdate) => Promise<void>> {
     this.claim();
-    try { await this.runtime?.close(); this.runtime = undefined; }
-    catch { throw new DomainError('runtime_stop_failed', 503); }
-    let released = false;
-    return async safe => {
-      if (released) return;
-      released = true;
-      if (!safe) return;
-      try { await this.start(); } finally { this.busy = false; }
+    await this.stop();
+    if (this.closing) throw new DomainError('service_closing', 503);
+    let release: Promise<void> | undefined;
+    return (safe, update) => {
+      if (release) return release;
+      release = this.releaseLease(safe, update);
+      const operation = release;
+      this.operation = operation;
+      release = operation.finally(() => { if (this.operation === operation) this.operation = undefined; });
+      return release;
     };
+  }
+  private async releaseLease(safe: boolean, update?: ConsoleConfigurationUpdate): Promise<void> {
+    if (!safe) return;
+    if (this.closing) throw new DomainError('service_closing', 503);
+    if (update) {
+      let prepared: ReturnType<ConfigurationStore['prepare']>;
+      try { prepared = this.configuration.prepare(update); }
+      catch (error) {
+        try { await this.start(); } catch { /* Preserve the configuration validation error. */ }
+        finally { this.busy = false; }
+        throw error;
+      }
+      await this.install(prepared);
+    } else {
+      try { await this.start(); } finally { this.busy = false; }
+    }
   }
   onCallCreated: Runtime['onCallCreated'] = async call => { if (!this.runtime || this.busy) throw new DomainError('management_busy', 409); await this.runtime.onCallCreated(call); };
   onEnd: Runtime['onEnd'] = async call => { await this.runtime?.onEnd(call); };

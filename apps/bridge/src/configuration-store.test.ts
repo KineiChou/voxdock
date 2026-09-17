@@ -114,3 +114,89 @@ it('enforces remote management restrictions on cookie and bearer APIs while reta
     expect((await app.inject({ url: '/v1/console/calls', remoteAddress: '203.0.113.1', headers: { authorization: `Bearer ${'x'.repeat(32)}` } })).statusCode).toBe(200);
   } finally { await app.close(); }
 });
+
+it('commits verified settings under the pairing lease and leaves admission paused', async () => {
+  const f = setup(); await f.manager.start();
+  const release = await f.manager.acquire();
+  const settings = f.configuration.view().settings; settings.live.voice = 'cedar';
+  settings.records.transcript_retention_days = 7;
+  const capture = vi.spyOn(f.store, 'setTranscriptCapture');
+  await release(true, { expected_revision: 0, settings });
+  expect(f.configuration.view().revision).toBe(1);
+  expect(f.config.live.voice).toBe('cedar');
+  expect(capture).toHaveBeenCalledWith(true);
+  expect(f.manager.managing).toBe(false);
+  expect(f.store.isPaused(false)).toBe(true);
+});
+it('restores the prior runtime and preserves stale revision errors on lease release', async () => {
+  const f = setup(); await f.manager.start();
+  const release = await f.manager.acquire();
+  await expect(release(true, { expected_revision: 1, settings: f.configuration.view().settings })).rejects.toMatchObject({ code: 'revision_conflict' });
+  expect(f.start).toHaveBeenCalledTimes(2);
+  expect(f.configuration.view().revision).toBe(0);
+  expect(f.manager.managing).toBe(false);
+});
+it('rolls back a failed lease candidate without committing settings', async () => {
+  let starts = 0;
+  const f = setup(async () => {
+    if (++starts === 2) throw new Error('unavailable');
+    return { readyChannels: new Set(), onCallCreated: async () => {}, onEnd: async () => {}, onResult: async () => {}, close: async () => {} };
+  });
+  await f.manager.start(); const release = await f.manager.acquire();
+  await expect(release(true, { expected_revision: 0, settings: f.configuration.view().settings })).rejects.toMatchObject({ code: 'runtime_apply_failed' });
+  expect(starts).toBe(3); expect(f.configuration.view().revision).toBe(0); expect(f.manager.managing).toBe(false);
+});
+it('ignores updates from an unsafe lease release and retains exclusivity', async () => {
+  const f = setup(); await f.manager.start(); const release = await f.manager.acquire();
+  await release(false, { expected_revision: 0, settings: f.configuration.view().settings });
+  await release(true);
+  expect(f.start).toHaveBeenCalledOnce(); expect(f.manager.managing).toBe(true); expect(f.configuration.view().revision).toBe(0);
+});
+it('waits for lease commit shutdown, closes late candidates, and shares repeated release promises', async () => {
+  let complete!: () => void, starts = 0;
+  const candidateClosed = vi.fn(async () => {});
+  const f = setup(async () => {
+    const number = ++starts;
+    if (number === 2) await new Promise<void>(resolve => { complete = resolve; });
+    return { readyChannels: new Set(), onCallCreated: async () => {}, onEnd: async () => {}, onResult: async () => {}, close: number === 2 ? candidateClosed : async () => {} };
+  });
+  await f.manager.start(); const release = await f.manager.acquire();
+  const releasing = release(true, { expected_revision: 0, settings: f.configuration.view().settings });
+  expect(release(true)).toBe(releasing);
+  const rejected = expect(releasing).rejects.toMatchObject({ code: 'service_closing' });
+  let done = false; const closing = f.manager.close().then(() => { done = true; });
+  await Promise.resolve(); expect(done).toBe(false);
+  complete(); await Promise.all([rejected, closing]);
+  expect(candidateClosed).toHaveBeenCalledOnce(); expect(starts).toBe(2); expect(f.configuration.view().revision).toBe(0);
+});
+it('keeps a lease candidate owned when commit and cleanup both fail', async () => {
+  let starts = 0, fail = true;
+  const f = setup(async () => {
+    const number = ++starts;
+    return { readyChannels: new Set(), onCallCreated: async () => {}, onEnd: async () => {}, onResult: async () => {}, close: async () => { if (number === 2 && fail) throw new Error('unknown'); } };
+  });
+  await f.manager.start(); const release = await f.manager.acquire();
+  const prepare = f.configuration.prepare.bind(f.configuration);
+  vi.spyOn(f.configuration, 'prepare').mockImplementation(input => ({ ...prepare(input), commit: () => { throw new Error('disk_unavailable'); } }));
+  await expect(release(true, { expected_revision: 0, settings: f.configuration.view().settings })).rejects.toMatchObject({ code: 'runtime_stop_failed' });
+  expect(starts).toBe(2); expect(f.manager.managing).toBe(true); expect(f.configuration.view().revision).toBe(0);
+  fail = false;
+});
+it('waits for lease acquisition shutdown and never exposes a lease after closing', async () => {
+  let complete!: () => void;
+  const stopped = vi.fn(() => new Promise<void>(resolve => { complete = resolve; }));
+  const f = setup(async () => ({ readyChannels: new Set(), onCallCreated: async () => {}, onEnd: async () => {}, onResult: async () => {}, close: stopped }));
+  await f.manager.start();
+  const acquiring = f.manager.acquire();
+  const rejected = expect(acquiring).rejects.toMatchObject({ code: 'service_closing' });
+  await expect(f.manager.acquire()).rejects.toMatchObject({ code: 'management_busy' });
+  let done = false; const closing = f.manager.close().then(() => { done = true; });
+  await Promise.resolve(); expect(done).toBe(false);
+  complete(); await Promise.all([rejected, closing]); expect(stopped).toHaveBeenCalledOnce();
+});
+it('does not restart or commit a lease released after shutdown', async () => {
+  const f = setup(); await f.manager.start(); const release = await f.manager.acquire();
+  await f.manager.close();
+  await expect(release(true, { expected_revision: 0, settings: f.configuration.view().settings })).rejects.toMatchObject({ code: 'service_closing' });
+  expect(f.start).toHaveBeenCalledOnce(); expect(f.configuration.view().revision).toBe(0);
+});
