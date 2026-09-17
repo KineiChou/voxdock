@@ -1,4 +1,5 @@
 import { expect, test, vi } from 'vitest';
+import type { WaCallsMediaOptions } from '@voxdock/whatsapp';
 import { createWhatsAppDriver, whatsAppPhone } from './whatsapp.js';
 import type { VoiceEvents } from './types.js';
 function fixture(overrides: { paired?: boolean; target?: string; calls?: unknown[]; acknowledged?: boolean } = {}) {
@@ -21,7 +22,7 @@ function fixture(overrides: { paired?: boolean; target?: string; calls?: unknown
     return Response.json({ status: 'ok' });
   });
   const writeAudio = vi.fn(); const mediaClose = vi.fn();
-  const media = vi.fn(async () => ({ writeAudio, close: mediaClose }));
+  const media = vi.fn(async (_settings: WaCallsMediaOptions) => ({ writeAudio, close: mediaClose }));
   const options = { baseUrl: 'http://wacalls:8080', sessionId: 'session', peerId: overrides.target ?? '12025550101@s.whatsapp.net', mediaSecret: 's'.repeat(32), fetch: fetcher as typeof fetch, media };
   return { callbacks, send, media, writeAudio, options, fetcher, flush: () => new Promise(resolve => setImmediate(resolve)) };
 }
@@ -38,6 +39,62 @@ test('paired-session identity, actual connected evidence and call-bound PCM; loc
     await driver.end('call'); await f.flush();
     expect(f.callbacks.state).toHaveBeenLastCalledWith('call', 'uncertain');
     await expect(driver.dial(f.options.peerId, AbortSignal.timeout(1000))).rejects.toThrow('unavailable');
+  } finally { await driver.close(); }
+});
+
+test('a media close before remote termination keeps signaling alive and permits the next call', async () => {
+  const f = fixture(); const driver = await createWhatsAppDriver(f.options, f.callbacks);
+  try {
+    await driver.dial(f.options.peerId, AbortSignal.timeout(1000));
+    f.send({ type: 'call-status', sessionId: 'session', id: 'call', status: 'connected' }); await f.flush();
+    const mediaEvents = f.media.mock.calls[0]![0];
+    mediaEvents.onClosed('transport_closed');
+    expect(f.callbacks.state).toHaveBeenLastCalledWith('call', 'uncertain');
+    expect(f.callbacks.fault).not.toHaveBeenCalled();
+    await expect(driver.writeAudio('call', Buffer.alloc(640))).rejects.toThrow('unavailable');
+    const beforeDuplicate = vi.mocked(f.callbacks.state).mock.calls.length;
+    mediaEvents.onClosed('transport_closed');
+    expect(f.callbacks.state).toHaveBeenCalledTimes(beforeDuplicate);
+    await expect(driver.dial(f.options.peerId, AbortSignal.timeout(1000))).rejects.toThrow('unavailable');
+
+    // DELETE can lose a race to upstream removal; only the correlated terminal event releases capacity.
+    f.fetcher.mockResolvedValueOnce(new Response(null, { status: 404 }));
+    await driver.end('call');
+    expect(f.callbacks.state).toHaveBeenLastCalledWith('call', 'uncertain');
+    await expect(driver.dial(f.options.peerId, AbortSignal.timeout(1000))).rejects.toThrow('unavailable');
+    f.send({ type: 'call-ended', sessionId: 'other', id: 'call', reason: 'user_ended', termination: 'remote' });
+    f.send({ type: 'call-ended', sessionId: 'session', id: 'other', reason: 'user_ended', termination: 'remote' });
+    await f.flush();
+    expect(f.callbacks.state).not.toHaveBeenCalledWith('call', 'ended');
+    f.send({ type: 'call-ended', sessionId: 'session', id: 'call', reason: 'user_ended', termination: 'remote' });
+    await f.flush();
+    expect(f.callbacks.state).toHaveBeenLastCalledWith('call', 'ended');
+    expect(await driver.dial(f.options.peerId, AbortSignal.timeout(1000))).toBe('call');
+    mediaEvents.onClosed('transport_closed');
+    expect(f.callbacks.state).toHaveBeenLastCalledWith('call', 'dialing');
+  } finally { await driver.close(); }
+});
+
+test.each(['rejected', 'resolved'] as const)('closed media startup (%s) is reported once and can be resolved by confirmed call termination', async outcome => {
+  const f = fixture({ acknowledged: true });
+  f.media.mockImplementationOnce(async settings => {
+    settings.onClosed('connect_failed');
+    if (outcome === 'rejected') throw new Error('startup failed');
+    return { writeAudio: f.writeAudio, close: vi.fn() };
+  });
+  const driver = await createWhatsAppDriver(f.options, f.callbacks);
+  try {
+    await driver.dial(f.options.peerId, AbortSignal.timeout(1000));
+    f.send({ type: 'call-status', sessionId: 'session', id: 'call', status: 'connected' }); await f.flush();
+    expect(vi.mocked(f.callbacks.state).mock.calls.filter(([, state]) => state === 'uncertain')).toHaveLength(1);
+    expect(f.callbacks.audioReady).not.toHaveBeenCalled();
+    expect(f.callbacks.fault).not.toHaveBeenCalled();
+    f.send({ type: 'call-ended', sessionId: 'session', id: 'call', reason: 'user_ended' }); await f.flush();
+    expect(f.callbacks.state).toHaveBeenLastCalledWith('call', 'uncertain');
+    await expect(driver.dial(f.options.peerId, AbortSignal.timeout(1000))).rejects.toThrow('unavailable');
+    await driver.end('call'); await f.flush();
+    expect(f.callbacks.state).toHaveBeenLastCalledWith('call', 'ended');
+    expect(await driver.dial(f.options.peerId, AbortSignal.timeout(1000))).toBe('call');
   } finally { await driver.close(); }
 });
 test('foreign or unresolved incoming identities cannot be accepted, allowed offer waits for explicit admission', async () => {
