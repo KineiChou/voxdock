@@ -1,6 +1,6 @@
 # Native platform adapters
 
-Evidence dates: 2026-09-16–17. A WhatsApp account paired on the ARM64 server and a first outgoing call carried a heard Live opening and Sol answer, then ended unexpectedly with `audio_failed`. Native test results below were originally account-free; see [phone acceptance](acceptance.md#first-whatsapp-conversation-2026-09-17) for the limits of the real-call evidence. Telegram handset calls remain unverified.
+Evidence dates: 2026-09-16–17. A WhatsApp account paired on the ARM64 server. After a first outgoing call ended with `audio_failed`, the pacing fix sustained normal conversation to a 120-second limit; the phone still displayed “Call failed” on termination. A callback exposed a device-qualified LID parsing defect, now fixed in code and awaiting handset retest. Native test results below were originally account-free; see [phone acceptance](acceptance.md#two-minute-retest-and-incoming-rejection-2026-09-17) for the limits of the real-call evidence. Telegram handset calls remain unverified.
 
 ## Locked upstreams
 
