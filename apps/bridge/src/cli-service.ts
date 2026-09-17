@@ -13,6 +13,7 @@ import { ConfigurationStore } from './configuration-store.js';
 import { RuntimeManager } from './runtime-manager.js';
 import { createConnectionService, type ConnectionService } from './connection-service.js';
 import { DomainError } from '@voxdock/core';
+import { TelegramPairingService } from './telegram-pairing-service.js';
 import { TargetPairingService } from './target-pairing-service.js';
 import { unlinkWhatsAppAccount } from './whatsapp-account.js';
 export interface Runtime {
@@ -65,6 +66,7 @@ export async function startService(
   let store: CallStore | undefined;
   let runtime: RuntimeManager | undefined;
   let connections: ConnectionService | undefined;
+  let telegramPairing: TelegramPairingService | undefined;
   let targetPairing: TargetPairingService | undefined;
   let app: Awaited<ReturnType<typeof createBridgeServer>> | undefined;
   let closed = false;
@@ -80,6 +82,7 @@ export async function startService(
     // Close runtime admission immediately, even if a platform cancellation later times out.
     runtime?.beginShutdown();
     for (const action of [
+      () => telegramPairing ? bounded(() => telegramPairing!.close(), 25000) : Promise.resolve(),
       () => targetPairing ? bounded(() => targetPairing!.close(), 25000) : Promise.resolve(),
       () => connections ? bounded(() => connections!.close(), 15000) : Promise.resolve(),
       () => runtime ? bounded(() => runtime!.close(), 25000) : Promise.resolve(),
@@ -117,17 +120,19 @@ export async function startService(
       const sessionId = wa.account_ref ?? configuration.view().settings.whatsapp.account_ref;
       return { baseUrl: wa.endpoint, sessionId, clientId: `voxdock:${sessionId}` };
     };
+    const getTelegramConfig = async () => {
+      const tg = config.channels.telegram;
+      const apiId = tg.api_id ?? Number(tg.api_id_env ? process.env[tg.api_id_env] : undefined);
+      if (!Number.isSafeInteger(apiId) || apiId <= 0 || !tg.api_hash_file || !tg.session_file) throw new DomainError('telegram_credentials_required', 409);
+      return { apiId, apiHash: readPrivateText(resolve(directory, tg.api_hash_file)), sessionFile: resolve(directory, tg.session_file) };
+    };
     connections = createConnectionService({
       acquire: () => runtime!.acquire(),
       unlinkWhatsApp: () => unlinkWhatsAppAccount(runtime!, getWhatsAppConfig),
-      async getTelegramConfig() {
-        const tg = config.channels.telegram;
-        const apiId = tg.api_id ?? Number(tg.api_id_env ? process.env[tg.api_id_env] : undefined);
-        if (!Number.isSafeInteger(apiId) || apiId <= 0 || !tg.api_hash_file || !tg.session_file) throw new DomainError('telegram_credentials_required', 409);
-        return { apiId, apiHash: readPrivateText(resolve(directory, tg.api_hash_file)), sessionFile: resolve(directory, tg.session_file) };
-      },
+      getTelegramConfig,
       getWhatsAppConfig,
     });
+    telegramPairing = new TelegramPairingService({ acquire: () => runtime!.acquire(), configuration: () => configuration.view(), getTelegramConfig });
     targetPairing = new TargetPairingService({ acquire: () => runtime!.acquire(), configuration: () => configuration.view(), getWhatsAppConfig });
     app = await createBridgeServer({
       config,
@@ -136,6 +141,7 @@ export async function startService(
       management: runtime,
       connections,
       targetPairing,
+      telegramPairing,
       get readyChannels() { return runtime!.readyChannels; },
       onCallCreated: (call) => runtime!.onCallCreated(call),
       onEnd: (call) => runtime!.onEnd(call),
