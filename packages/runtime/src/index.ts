@@ -277,13 +277,13 @@ export async function createRuntime(options: { config: BridgeConfig; store: Call
   if (config.calling.enabled && backend) {
     for (const target of config.targets) {
       if (!target.enabled || !config.channels[target.channel].enabled) continue;
-      const peerId = env(target.peer_id_env); if (!peerId) continue;
+      const peerId = target.peer_id ?? (target.peer_id_env ? env(target.peer_id_env) : undefined); if (!peerId) continue;
       try {
         let voice: VoiceDriver;
         if (dependencies.voice) voice = await dependencies.voice(target, peerId, callbacks(target));
         else if (target.channel === 'telegram' && config.channels.telegram.enabled) {
           const channel = config.channels.telegram;
-          voice = await createTelegramProcess({ apiId: Number(env(channel.api_id_env)), apiHashFile: file(channel.api_hash_file), sessionFile: file(channel.session_file), peerId }, callbacks(target));
+          voice = await createTelegramProcess({ apiId: channel.api_id ?? Number(channel.api_id_env ? env(channel.api_id_env) : undefined), apiHashFile: file(channel.api_hash_file), sessionFile: file(channel.session_file), peerId }, callbacks(target));
         } else if (target.channel === 'whatsapp' && config.channels.whatsapp.enabled) {
           const channel = config.channels.whatsapp;
           voice = await createWhatsAppDriver({ baseUrl: channel.endpoint, sessionId: channel.account_ref, peerId, mediaSecret: await secret(file(channel.media_token_file)) }, callbacks(target));

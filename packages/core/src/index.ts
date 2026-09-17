@@ -64,7 +64,7 @@ export interface CreateCallOptions {
 export class CallStore {
   private readonly db: Database.Database;
   private readonly now: () => Date;
-  private readonly persistTranscripts: boolean;
+  private persistTranscripts: boolean;
   constructor(
     filename: string,
     options: { now?: () => Date; persistTranscripts?: boolean } = {},
@@ -85,6 +85,7 @@ export class CallStore {
   consoleTranscripts(id: string, options: { cursor?: string; limit?: number } = {}) {
     return new ConsoleQueries(this.db, this.now).transcripts(id, options);
   }
+  setTranscriptCapture(enabled: boolean): void { this.persistTranscripts = enabled; }
   private captureTranscripts(callId: string): boolean {
     const row = this.db
       .prepare("SELECT availability FROM recording WHERE call_id=?")
