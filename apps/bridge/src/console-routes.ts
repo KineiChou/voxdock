@@ -1,12 +1,13 @@
 import { Type } from '@sinclair/typebox';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { RefSchema, ConsoleConfigurationUpdateSchema, type ConsoleConfigurationUpdate, type ConsoleCallQuery } from '@voxdock/contracts';
+import { RefSchema, ConsoleConfigurationUpdateSchema, ConsoleSettingsOptionsSchema, type ConsoleConfigurationUpdate, type ConsoleCallQuery } from '@voxdock/contracts';
 import { DomainError } from '@voxdock/core';
 import { registerConnectionRoutes } from './connection-routes.js';
 import { registerTargetPairingRoutes } from './target-pairing-routes.js';
 import { saveTelegramTarget } from './connection-targets.js';
 import type { BridgeServerOptions } from './server.js';
 import { createConsoleService } from './console-service.js';
+import { consoleSettingsOptions } from './console-settings-options.js';
 import { redactAudit, renderAudit } from './cli-api.js';
 
 const emptyMutation = async (request: FastifyRequest, reply: FastifyReply) => {
@@ -30,6 +31,7 @@ export function registerConsoleRoutes(app: FastifyInstance, prefix: string, opti
     return saveTelegramTarget(options.management, request.body);
   });
   app.get(`${prefix}/settings`, async () => service.settings());
+  app.get(`${prefix}/settings/options`, { schema: { response: { 200: ConsoleSettingsOptionsSchema } } }, async () => consoleSettingsOptions);
   app.get(`${prefix}/control/status`, async () => ({ calling: service.settings().calling }));
   app.get(`${prefix}/settings/configuration`, async () => {
     if (!options.management) throw new DomainError('configuration_unavailable', 503);

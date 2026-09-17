@@ -63,7 +63,9 @@ it('forwards console query options to the authenticated server without client ag
     await runCli(['overview', '--config', config, '--days', '7'], deps);
     await runCli(['calls', '--config', config, '--channel', 'whatsapp', '--limit', '10'], deps);
     await runCli(['resume', '--online', '--config', config], deps);
-    expect(urls).toEqual(['/v1/console/overview?days=7', '/v1/console/calls?channel=whatsapp&limit=10', '/v1/console/control/resume']);
+    await runCli(['settings', 'options', '--config', config], deps);
+    await expect(runCli(['settings', 'unknown', '--config', config], deps)).rejects.toThrow('invalid_arguments');
+    expect(urls).toEqual(['/v1/console/overview?days=7', '/v1/console/calls?channel=whatsapp&limit=10', '/v1/console/control/resume', '/v1/console/settings/options']);
     expect(output.every(value => JSON.parse(value).server_result === true)).toBe(true);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
