@@ -88,22 +88,22 @@ describe("configuration", () => {
     expect(result.channels.telegram.enabled).toBe(false);
     expect(result.channels.whatsapp.enabled).toBe(true);
   });
-  it("does not treat a paused channel target as callable", () => {
-    expect(() =>
-      parseConfig({
-        calling: { enabled: true },
-        security: { control_token_file: "/not-read/control" },
-        live: { api_key_file: "/not-read/live" },
-        backend: {
-          id: "backend",
-          base_url: "http://localhost:8090",
-          request_token_file: "/not-read/token",
-          event_signing_key_file: "/not-read/events",
-        },
-        channels: { telegram: { ...telegram, enabled: false } },
-        targets: [target],
-      }),
-    ).toThrow("Calling requires");
+  it.each(['channel disabled', 'target disabled', 'unbound'])("preserves calling preference while %s", state => {
+    const result = parseConfig({
+      calling: { enabled: true },
+      security: { control_token_file: "/not-read/control" },
+      live: { api_key_file: "/not-read/live" },
+      backend: {
+        id: "backend",
+        base_url: "http://localhost:8090",
+        request_token_file: "/not-read/token",
+        event_signing_key_file: "/not-read/events",
+      },
+      channels: { telegram: { ...telegram, enabled: state !== 'channel disabled' } },
+      targets: state === 'unbound' ? [] : [{ ...target, enabled: state !== 'target disabled' }],
+    });
+    expect(result.calling.enabled).toBe(true);
+    expect(result.targets.some(target => target.enabled && result.channels[target.channel].enabled)).toBe(false);
   });
   it("accepts independent ringing and connected duration limits", () => {
     expect(
