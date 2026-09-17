@@ -49,8 +49,10 @@ export function useConfigurationForm(initial: ConsoleConfigurationView) {
       setSecrets({});
       setSaved(true);
       await queryClient.invalidateQueries();
+      return true;
     } catch (error) {
       setError(error as Error);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -77,6 +79,8 @@ export function useConfigurationForm(initial: ConsoleConfigurationView) {
     settings,
     update,
     busy,
+    error,
+    reload,
     secret: (key: ConfigurationSecret, label: string) => (
       <PasswordInput
         label={label}
