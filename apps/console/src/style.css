@@ -1,0 +1,250 @@
+:root {
+  color: #24312d;
+  background: #f5f7f6;
+  font-synthesis: none;
+}
+body {
+  margin: 0;
+}
+.mantine-AppShell-main {
+  background: #f5f7f6;
+}
+.page {
+  max-width: 1480px;
+  margin: auto;
+}
+.topbar {
+  border-bottom: 1px solid #e5eae7;
+  background: #fff;
+}
+.sidebar {
+  background: #192923;
+  color: #edf6f1;
+  border: none;
+  top: 0 !important;
+  height: 100dvh !important;
+  z-index: 110;
+}
+.brand {
+  height: 70px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  margin-bottom: 32px;
+}
+.brand-mark {
+  width: 31px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  color: #8fe0bb;
+}
+.brand-mark i {
+  width: 3px;
+  background: currentColor;
+  border-radius: 3px;
+  height: 12px;
+}
+.brand-mark i:nth-child(2),
+.brand-mark i:nth-child(4) {
+  height: 23px;
+}
+.brand-mark i:nth-child(3) {
+  height: 31px;
+}
+.eyebrow {
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 1.5px;
+  color: #83928a;
+}
+.nav-caption {
+  padding: 0 15px;
+  margin-bottom: 12px;
+}
+.nav-item {
+  color: #aabcb2;
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 12px 15px;
+  border-radius: 9px;
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 5px;
+}
+.nav-item:hover {
+  background: #243a30;
+  color: white;
+}
+.nav-item.active {
+  background: #304b3d;
+  color: #c5f6df;
+}
+.sidebar-bottom {
+  margin-top: auto;
+  padding: 22px 12px 0;
+  border-top: 1px solid #344339;
+}
+.avatar {
+  background: #e7f0eb;
+  color: #41634e;
+  border-radius: 50%;
+  width: 29px;
+  height: 29px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 600;
+}
+.mantine-Paper-root {
+  border-color: #e1e8e3;
+  box-shadow: 0 2px 3px #24352b02;
+}
+.metric {
+  letter-spacing: -0.7px;
+}
+.chart-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2.5fr) minmax(260px, 1fr);
+  gap: 20px;
+}
+.mantine-Table-th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  font-weight: 600;
+  color: #7a8981;
+  background: #fafcfb;
+}
+.mantine-Table-td {
+  font-size: 13px;
+}
+.call-link {
+  color: #24674f;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.call-link:hover {
+  text-decoration: underline;
+}
+.fields {
+  margin: 0;
+}
+.fields > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 22px;
+  padding: 11px 0;
+  border-bottom: 1px solid #edf0ee;
+  font-size: 13px;
+}
+.fields > div:last-child {
+  border-bottom: 0;
+}
+.fields dt {
+  color: #7b8881;
+  flex-shrink: 0;
+}
+.fields dd {
+  margin: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.record-block {
+  border: 1px solid #e5ebe7;
+  border-radius: 10px;
+  padding: 15px;
+}
+.fragment {
+  padding: 18px;
+  margin-bottom: 12px;
+  border: 1px solid #e5ebe7;
+  border-radius: 12px;
+  max-width: 850px;
+}
+.fragment.assistant {
+  background: #f2f8f5;
+}
+.preserve-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.login {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: #fff;
+}
+.login-story {
+  background: #192923;
+  color: #f0f8f4;
+  padding: 56px 10%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 100dvh;
+}
+.login-story h1 {
+  font-size: 48px;
+  line-height: 1.16;
+  font-weight: 500;
+  letter-spacing: -2px;
+}
+.login-form {
+  padding: 24px;
+}
+.login-form .mantine-Paper-root {
+  box-shadow: none;
+}
+@media (min-width: 48em) {
+  .topbar {
+    padding-left: 230px;
+  }
+}
+@media (max-width: 64em) {
+  .chart-grid {
+    grid-template-columns: 1fr;
+  }
+  .login-story h1 {
+    font-size: 38px;
+  }
+}
+@media (max-width: 48em) {
+  .sidebar {
+    top: 64px !important;
+    height: calc(100dvh - 64px) !important;
+  }
+  .brand {
+    height: 50px;
+    margin-bottom: 20px;
+  }
+  .login {
+    display: block;
+  }
+  .login-story {
+    min-height: 190px;
+    padding: 24px;
+  }
+  .login-story > div:nth-child(2) {
+    display: none;
+  }
+  .login-story > p {
+    margin-top: 30px;
+  }
+  .login-form {
+    min-height: calc(100dvh - 190px);
+    padding: 12px;
+  }
+  .fields > div {
+    gap: 10px;
+  }
+  .fields dt {
+    flex-shrink: 1;
+  }
+}
