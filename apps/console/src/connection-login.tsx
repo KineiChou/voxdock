@@ -198,7 +198,7 @@ export function ConnectionLogin({
             Cancel pairing
           </Button>
         </>
-      ) : ready ? (
+      ) : ready || flow?.state === "connected" ? (
         <Button
           variant="light"
           color="red"
