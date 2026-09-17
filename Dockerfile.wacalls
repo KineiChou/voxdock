@@ -18,6 +18,9 @@ RUN git apply --check /tmp/target-pairing.patch && git apply /tmp/target-pairing
 COPY patches/wacalls/account-unlink.patch /tmp/account-unlink.patch
 RUN git apply --check /tmp/account-unlink.patch && git apply /tmp/account-unlink.patch
 
+COPY patches/wacalls/qr-refresh.patch /tmp/qr-refresh.patch
+RUN git apply --check /tmp/qr-refresh.patch && git apply /tmp/qr-refresh.patch
+
 FROM node:24.21.0-bookworm-slim AS client
 WORKDIR /client
 COPY --from=source /source/client/ ./
@@ -28,7 +31,7 @@ RUN go test ./cmd/server ./internal/voip/call \
  && CGO_ENABLED=0 go build -trimpath -o /out/wacalls-server ./cmd/server \
  && go list -m -json all > /out/dependencies.json \
  && git rev-parse HEAD > /out/source-revision.txt \
- && sha256sum /tmp/media-websocket.patch /tmp/console-connections.patch /tmp/target-pairing.patch /tmp/account-unlink.patch /out/wacalls-server > /out/checksums.txt
+ && sha256sum /tmp/media-websocket.patch /tmp/console-connections.patch /tmp/target-pairing.patch /tmp/account-unlink.patch /tmp/qr-refresh.patch /out/wacalls-server > /out/checksums.txt
 
 FROM debian:bookworm-slim
 RUN apt-get update \

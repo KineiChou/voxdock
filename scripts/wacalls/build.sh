@@ -16,7 +16,7 @@ source_url=${WACALLS_SOURCE_DIR:-https://github.com/JotaDev66/WaCalls.git}
 git clone --no-checkout -- "$source_url" "$build_dir/source"
 git -C "$build_dir/source" checkout --detach "$revision"
 [[ $(git -C "$build_dir/source" rev-parse HEAD) == "$revision" ]]
-for patch in media-websocket console-connections target-pairing account-unlink; do
+for patch in media-websocket console-connections target-pairing account-unlink qr-refresh; do
   git -C "$build_dir/source" apply --check "$repo_dir/patches/wacalls/$patch.patch"
   git -C "$build_dir/source" apply "$repo_dir/patches/wacalls/$patch.patch"
 done

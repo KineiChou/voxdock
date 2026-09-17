@@ -1,0 +1,642 @@
+diff --git a/cmd/server/accountunlink.go b/cmd/server/accountunlink.go
+index a49d5c7..5328be3 100644
+--- a/cmd/server/accountunlink.go
++++ b/cmd/server/accountunlink.go
+@@ -102,10 +102,11 @@ func (m *SessionManager) unlinkAccountUsing(ctx context.Context, id string, logo
+ 	}
+ 	sess.mu.Lock()
+ 	sess.expireTargetLocked(time.Now())
+-	if (sess.pairingDone != nil && !sess.pairingCompleted) || sess.reg.count() != 0 || (sess.target != nil && (sess.target.State == "waiting" || sess.target.State == "candidate")) {
++	if sess.attempt.writing || (sess.pairingDone != nil && !sess.pairingCompleted) || sess.reg.count() != 0 || (sess.target != nil && (sess.target.State == "waiting" || sess.target.State == "candidate")) {
+ 		sess.mu.Unlock()
+ 		return nil, errUnlinkBusy
+ 	}
++	sess.attempt.retired = true
+ 	sess.unlinking = true // Reserve before releasing the same lock used to admit calls.
+ 	if sess.pairingCancel != nil {
+ 		sess.pairingCancel()
+diff --git a/cmd/server/broker.go b/cmd/server/broker.go
+index 62ca948..589186d 100644
+--- a/cmd/server/broker.go
++++ b/cmd/server/broker.go
+@@ -30,9 +30,11 @@ type CallRecord struct {
+ }
+ 
+ type AuthSnapshot struct {
+-	State  string `json:"state"`
+-	Paired bool   `json:"paired"`
+-	QR     string `json:"qr,omitempty"`
++	State       string    `json:"state"`
++	Paired      bool      `json:"paired"`
++	QR          string    `json:"qr,omitempty"`
++	QRExpiresAt time.Time `json:"-"`
++	Error       string    `json:"error,omitempty"`
+ }
+ 
+ type SessionInfo struct {
+diff --git a/cmd/server/connection.go b/cmd/server/connection.go
+index fb5d024..a870590 100644
+--- a/cmd/server/connection.go
++++ b/cmd/server/connection.go
+@@ -6,6 +6,7 @@ import (
+ 	"net/http"
+ 	"regexp"
+ 	"sync"
++	"time"
+ )
+ 
+ // Serialize operator changes; pairing is asynchronous and status reads never reset it.
+@@ -20,6 +21,17 @@ func (s *server) connectionStatus(w http.ResponseWriter, sess *Session) {
+ 	}
+ 	sess.mu.Lock()
+ 	a := sess.auth
++	attempt := sess.attempt
++	writing, paired, cleanup := attempt.writing, attempt.paired, attempt.cleanup
++	if writing {
++		a = AuthSnapshot{State: "pairing"}
++	}
++	if cleanup {
++		a = AuthSnapshot{State: "pairing_recovery_required", Error: "connection_cleanup_required"}
++	}
++	if a.State == "qr" && !a.QRExpiresAt.IsZero() && !time.Now().Before(a.QRExpiresAt) {
++		a = AuthSnapshot{State: "connecting"}
++	}
+ 	sess.mu.Unlock()
+ 	pending, _, err := sess.mgr.unlinkState(context.Background(), sess.id)
+ 	if pending || err != nil {
+@@ -30,10 +42,18 @@ func (s *server) connectionStatus(w http.ResponseWriter, sess *Session) {
+ 		a.State = "disconnected"
+ 		a.QR = ""
+ 	}
+-	result := map[string]any{"paired": sess.client.Store.ID != nil, "state": a.State, "qr": a.QR}
+-	if id := sess.client.Store.ID; id != nil {
+-		if phone := targetPhone(context.Background(), *id, sess.client.Store.LIDs); phone != "" {
+-			result["phone"] = phone
++	result := map[string]any{"paired": paired, "state": a.State, "qr": a.QR}
++	if a.QR != "" && !a.QRExpiresAt.IsZero() {
++		result["qr_expires_at"] = a.QRExpiresAt.UTC().Format(time.RFC3339Nano)
++	}
++	if a.Error != "" {
++		result["error"] = a.Error
++	}
++	if paired {
++		if id := sess.client.Store.ID; id != nil {
++			if phone := targetPhone(context.Background(), *id, sess.client.Store.LIDs); phone != "" {
++				result["phone"] = phone
++			}
+ 		}
+ 	}
+ 	writeJSON(w, http.StatusOK, result)
+@@ -72,13 +92,25 @@ func (s *server) handleConnectionConnect(w http.ResponseWriter, r *http.Request)
+ 	}
+ 	sess.mu.Lock()
+ 	state := sess.auth.State
++	protected := sess.attempt.writing || sess.attempt.cleanup
++	paired := sess.attempt.paired
+ 	sess.mu.Unlock()
++	if protected {
++		s.connectionStatus(w, sess)
++		return
++	}
+ 	if state == "open" && (!sess.client.IsConnected() || !sess.client.IsLoggedIn()) {
+ 		state = "disconnected"
+ 	}
+ 	if state != "open" && state != "qr" && state != "connecting" {
+-		sess.setAuth(AuthSnapshot{State: "connecting", Paired: sess.client.Store.ID != nil})
+-		if err := sess.connect(s.sessions.appCtx); err != nil {
++		sess.setAuth(AuthSnapshot{State: "connecting", Paired: paired})
++		var err error
++		if paired {
++			err = sess.connect(s.sessions.appCtx)
++		} else {
++			err = sess.freshPairing()
++		}
++		if err != nil {
+ 			sess.setAuth(AuthSnapshot{State: "unknown"})
+ 			writeJSON(w, 502, map[string]string{"error": "connection unconfirmed"})
+ 			return
+@@ -100,6 +132,14 @@ func (s *server) handleConnectionDisconnect(w http.ResponseWriter, r *http.Reque
+ 			return
+ 		}
+ 		sess.mu.Lock()
++		if sess.attempt.writing {
++			sess.mu.Unlock()
++			writeJSON(w, 409, map[string]string{"error": "pairing in progress"})
++			return
++		}
++		if !sess.attempt.paired {
++			sess.attempt.retired = true
++		}
+ 		if sess.pairingCancel != nil {
+ 			sess.pairingCancel()
+ 			sess.pairingCancel = nil
+diff --git a/cmd/server/httpapi.go b/cmd/server/httpapi.go
+index cf635a6..6db9b11 100644
+--- a/cmd/server/httpapi.go
++++ b/cmd/server/httpapi.go
+@@ -19,6 +19,7 @@ func (s *server) routes() http.Handler {
+ 	mux.HandleFunc("POST /api/voxdock/sessions/{sid}/target-pairing/{id}/cancel", s.handleTargetPairingCancel)
+ 	mux.HandleFunc("GET /api/voxdock/sessions/{sid}", s.handleConnectionStatus)
+ 	mux.HandleFunc("POST /api/voxdock/sessions/{sid}/connect", s.handleConnectionConnect)
++	mux.HandleFunc("POST /api/voxdock/sessions/{sid}/refresh", s.handleConnectionRefresh)
+ 	mux.HandleFunc("POST /api/voxdock/sessions/{sid}/disconnect", s.handleConnectionDisconnect)
+ 	mux.HandleFunc("POST /api/voxdock/sessions/{sid}/unlink", s.handleConnectionUnlink)
+ 	if s.mediaAuth != nil {
+diff --git a/cmd/server/qrrefresh.go b/cmd/server/qrrefresh.go
+new file mode 100644
+index 0000000..62052a8
+--- /dev/null
++++ b/cmd/server/qrrefresh.go
+@@ -0,0 +1,222 @@
++package main
++
++import (
++	"context"
++	"net/http"
++	"time"
++
++	"go.mau.fi/whatsmeow"
++	"go.mau.fi/whatsmeow/types"
++	"go.mau.fi/whatsmeow/types/events"
++)
++
++// Protected by Session.mu. Admission precedes whatsmeow's detached credential writer.
++type pairingAttempt struct {
++	client  *whatsmeow.Client
++	retired bool
++	writing bool
++	paired  bool
++	cleanup bool
++}
++
++func (s *Session) installClient(client *whatsmeow.Client) {
++	a := &pairingAttempt{client: client, paired: client.Store.ID != nil}
++	s.mu.Lock()
++	s.client, s.attempt = client, a
++	s.mu.Unlock()
++	client.PrePairCallback = func(types.JID, string, string) bool {
++		s.mu.Lock()
++		defer s.mu.Unlock()
++		if s.attempt != a || a.retired {
++			return false
++		}
++		a.writing = true
++		s.auth = AuthSnapshot{State: "pairing"}
++		return true
++	}
++	client.AddEventHandler(func(event any) { s.handleAttemptEvent(a, event) })
++}
++
++func (s *Session) handleAttemptEvent(a *pairingAttempt, event any) {
++	s.mu.Lock()
++	if s.attempt != a || a.retired {
++		s.mu.Unlock()
++		return
++	}
++	switch event.(type) {
++	case *events.Connected:
++		a.writing, a.paired = false, true
++	case *events.LoggedOut:
++		a.paired = false
++	case *events.Disconnected:
++		if a.writing {
++			s.mu.Unlock()
++			return
++		}
++	case *events.PairSuccess:
++		a.writing, a.paired = false, true
++		s.pairingCompleted = true
++		s.auth = AuthSnapshot{State: "connecting", Paired: true}
++		s.mu.Unlock()
++		if id := a.client.Store.ID; id != nil {
++			_ = s.mgr.store.setJID(s.mgr.appCtx, s.id, id.String())
++		}
++		return
++	case *events.PairError:
++		a.writing = false
++		// An ID can precede Save or remain after failed cleanup. Never erase ambiguous credentials.
++		a.cleanup = a.client.Store.ID != nil
++		s.mu.Unlock()
++		s.failAttempt(a, "pairing_failed", "whatsapp_pairing_failed")
++		return
++	}
++	s.mu.Unlock()
++	s.handleEvent(event)
++}
++
++func (s *Session) publishAttempt(a *pairingAttempt, auth AuthSnapshot) {
++	s.mu.Lock()
++	if s.attempt != a || a.retired || a.writing || a.paired {
++		s.mu.Unlock()
++		return
++	}
++	s.auth = auth
++	s.mu.Unlock()
++	s.mgr.broker.emitAuthState(s.id, auth)
++}
++
++func (s *Session) failAttempt(a *pairingAttempt, state, code string) {
++	s.mu.Lock()
++	if s.attempt != a || a.retired || a.writing || a.paired {
++		s.mu.Unlock()
++		return
++	}
++	if a.cleanup {
++		state, code = "pairing_recovery_required", "connection_cleanup_required"
++	}
++	s.auth = AuthSnapshot{State: state, Error: code}
++	a.retired = true
++	cancel := s.pairingCancel
++	auth := s.auth
++	s.mu.Unlock()
++	if cancel != nil {
++		cancel()
++	}
++	s.log.Warn("WhatsApp pairing ended", "category", code)
++	s.mgr.broker.emitAuthState(s.id, auth)
++}
++
++func (s *Session) startPairing(ctx context.Context) error {
++	ctx, cancel := context.WithCancel(ctx)
++	done := make(chan struct{})
++	s.mu.Lock()
++	a := s.attempt
++	s.pairingCancel, s.pairingDone, s.pairingCompleted = cancel, done, false
++	s.mu.Unlock()
++	go func() {
++		defer func() {
++			s.mu.Lock()
++			if s.attempt == a && s.pairingDone == done && !a.writing {
++				s.pairingDone = nil
++			}
++			s.mu.Unlock()
++			close(done)
++		}()
++		qr, err := a.client.GetQRChannel(ctx)
++		if err != nil {
++			s.failAttempt(a, "pairing_failed", "whatsapp_pairing_failed")
++			return
++		}
++		if err := a.client.ConnectContext(ctx); err != nil {
++			s.failAttempt(a, "pairing_failed", "whatsapp_pairing_failed")
++			return
++		}
++		for {
++			select {
++			case <-ctx.Done():
++				s.failAttempt(a, "pairing_failed", "whatsapp_pairing_interrupted")
++				return
++			case evt, ok := <-qr:
++				if !ok {
++					s.failAttempt(a, "pairing_failed", "whatsapp_pairing_interrupted")
++					return
++				}
++				switch evt.Event {
++				case "code":
++					s.publishAttempt(a, AuthSnapshot{State: "qr", QR: evt.Code, QRExpiresAt: time.Now().Add(evt.Timeout)})
++				case "success":
++					return // PairSuccess persists identity; Connected alone establishes online readiness.
++				case "timeout":
++					s.failAttempt(a, "qr_expired", "whatsapp_pairing_interrupted")
++					return
++				case "err-client-outdated":
++					s.failAttempt(a, "client_outdated", "whatsapp_client_outdated")
++					return
++				case "error":
++					s.failAttempt(a, "pairing_failed", "whatsapp_pairing_failed")
++					return
++				case "err-unexpected-state", "err-scanned-without-multidevice":
++					s.failAttempt(a, "pairing_failed", "whatsapp_pairing_interrupted")
++					return
++				}
++			}
++		}
++	}()
++	return nil
++}
++
++// Called under connectionMu. Returning false preserves a successful/in-flight account.
++func (s *Session) retireUnpaired() bool {
++	s.mu.Lock()
++	a := s.attempt
++	if a.writing || a.paired || a.cleanup || a.client.Store.ID != nil {
++		s.mu.Unlock()
++		return false
++	}
++	a.retired = true
++	cancel, done := s.pairingCancel, s.pairingDone
++	s.mu.Unlock()
++	if cancel != nil {
++		cancel()
++	}
++	a.client.Disconnect()
++	if done != nil {
++		<-done
++	}
++	// Join dispatch callbacks before replacing s.client. Detached pairing cannot pass the retired gate.
++	a.client.RemoveEventHandlers()
++	s.mu.Lock()
++	s.pairingCancel, s.pairingDone = nil, nil
++	s.mu.Unlock()
++	return true
++}
++
++func (s *Session) freshPairing() error {
++	if !s.retireUnpaired() {
++		return nil
++	}
++	s.installClient(whatsmeow.NewClient(s.mgr.container.NewDevice(), s.mgr.waLogger))
++	s.setAuth(AuthSnapshot{State: "connecting"})
++	return s.startPairing(s.mgr.appCtx)
++}
++
++func (s *server) handleConnectionRefresh(w http.ResponseWriter, r *http.Request) {
++	connectionMu.Lock()
++	defer connectionMu.Unlock()
++	id := r.PathValue("sid")
++	if !connectionID.MatchString(id) {
++		writeJSON(w, 400, map[string]string{"error": "invalid session"})
++		return
++	}
++	sess, exists := s.sessions.Get(id)
++	if !exists {
++		writeJSON(w, 404, map[string]string{"error": "session not found"})
++		return
++	}
++	if sess.unlinking || sess.reg.count() != 0 {
++		writeJSON(w, 409, map[string]string{"error": "session unavailable"})
++		return
++	}
++	_ = sess.freshPairing()
++	s.connectionStatus(w, sess)
++}
+diff --git a/cmd/server/qrrefresh_test.go b/cmd/server/qrrefresh_test.go
+new file mode 100644
+index 0000000..9823c5f
+--- /dev/null
++++ b/cmd/server/qrrefresh_test.go
+@@ -0,0 +1,127 @@
++package main
++
++import (
++	"context"
++	"encoding/json"
++	"net/http/httptest"
++	"sync"
++	"testing"
++	"time"
++
++	"go.mau.fi/whatsmeow"
++	"go.mau.fi/whatsmeow/types"
++	"go.mau.fi/whatsmeow/types/events"
++)
++
++func TestQRRefreshRetiresSourceAndRejectsLateEvents(t *testing.T) {
++	m := newTestManager(t)
++	s := m.addUnconnected(t, "qr")
++	old := s.attempt
++	s.setAuth(AuthSnapshot{State: "qr", QR: "old", QRExpiresAt: time.Now().Add(time.Minute)})
++	if !s.retireUnpaired() {
++		t.Fatal("unpaired source not retired")
++	}
++	s.installClient(whatsmeow.NewClient(m.container.NewDevice(), m.waLogger))
++	s.setAuth(AuthSnapshot{State: "connecting"})
++	if old.client == s.client || old.client.Store.NoiseKey == s.client.Store.NoiseKey {
++		t.Fatal("fresh pairing reused source")
++	}
++	if old.client.PrePairCallback(types.EmptyJID, "", "") {
++		t.Fatal("retired source admitted detached pairing")
++	}
++	s.publishAttempt(old, AuthSnapshot{State: "qr", QR: "late"})
++	s.handleAttemptEvent(old, &events.PairSuccess{})
++	s.handleAttemptEvent(old, &events.Disconnected{})
++	if s.auth.State != "connecting" || s.auth.QR != "" || s.attempt.paired {
++		t.Fatal("stale event changed replacement")
++	}
++}
++
++func TestQRRefreshPairingGateAndSuccessPreserveClient(t *testing.T) {
++	for i := 0; i < 20; i++ {
++		m := newTestManager(t)
++		s := m.addUnconnected(t, "qr")
++		a := s.attempt
++		var admitted, retired bool
++		var wg sync.WaitGroup
++		wg.Add(2)
++		go func() { defer wg.Done(); admitted = a.client.PrePairCallback(types.EmptyJID, "", "") }()
++		go func() { defer wg.Done(); retired = s.retireUnpaired() }()
++		wg.Wait()
++		if admitted == retired {
++			t.Fatalf("gate outcomes admitted=%v retired=%v", admitted, retired)
++		}
++		if admitted {
++			req := httptest.NewRequest("POST", "/", nil)
++			req.SetPathValue("sid", s.id)
++			out := httptest.NewRecorder()
++			(&server{sessions: m}).handleConnectionRefresh(out, req)
++			var v map[string]any
++			_ = json.Unmarshal(out.Body.Bytes(), &v)
++			if out.Code != 200 || v["state"] != "pairing" || v["qr"] != "" || s.client != a.client {
++				t.Fatal("refresh interrupted pairing")
++			}
++			s.handleAttemptEvent(a, &events.PairSuccess{})
++			if s.retireUnpaired() || s.client != a.client || s.auth.State == "open" {
++				t.Fatal("paired client discarded or prematurely online")
++			}
++		}
++	}
++}
++
++func TestQRRefreshFailureAndExpiry(t *testing.T) {
++	m := newTestManager(t)
++	s := m.addUnconnected(t, "qr")
++	for _, tc := range []struct{ state, code string }{{"pairing_failed", "whatsapp_pairing_failed"}, {"client_outdated", "whatsapp_client_outdated"}, {"qr_expired", "whatsapp_pairing_interrupted"}} {
++		s.installClient(whatsmeow.NewClient(m.container.NewDevice(), m.waLogger))
++		s.publishAttempt(s.attempt, AuthSnapshot{State: "qr", QR: "old"})
++		s.failAttempt(s.attempt, tc.state, tc.code)
++		if s.auth.State != tc.state || s.auth.QR != "" || s.auth.Error != tc.code {
++			t.Fatal("terminal state retained QR")
++		}
++	}
++	s.setAuth(AuthSnapshot{State: "qr", QR: "expired", QRExpiresAt: time.Now().Add(-time.Second)})
++	out := httptest.NewRecorder()
++	(&server{sessions: m}).connectionStatus(out, s)
++	var v map[string]any
++	_ = json.Unmarshal(out.Body.Bytes(), &v)
++	if v["state"] != "connecting" || v["qr"] != "" {
++		t.Fatal("rotation exposed expired QR")
++	}
++}
++
++func TestQRRefreshCancellationTerminatesConsumer(t *testing.T) {
++	m := newTestManager(t)
++	s := m.addUnconnected(t, "qr")
++	ctx, cancel := context.WithCancel(context.Background())
++	cancel()
++	if err := s.startPairing(ctx); err != nil {
++		t.Fatal(err)
++	}
++	s.mu.Lock()
++	done := s.pairingDone
++	s.mu.Unlock()
++	select {
++	case <-done:
++	case <-time.After(time.Second):
++		t.Fatal("cancel did not finish pairing")
++	}
++	if s.auth.QR != "" || s.auth.State != "pairing_failed" {
++		t.Fatal("cancel left QR active")
++	}
++}
++
++func TestQRRefreshAmbiguousCredentialsRequireCleanup(t *testing.T) {
++	m := newTestManager(t)
++	s := m.addUnconnected(t, "qr")
++	a := s.attempt
++	if !a.client.PrePairCallback(types.EmptyJID, "", "") {
++		t.Fatal("admission failed")
++	}
++	jid := types.NewJID("12345", types.DefaultUserServer)
++	a.client.Store.ID = &jid
++	s.handleAttemptEvent(a, &events.PairError{})
++	if s.retireUnpaired() || s.auth.Error != "connection_cleanup_required" || s.client != a.client {
++		t.Fatal("ambiguous credentials erased")
++	}
++}
+diff --git a/cmd/server/session.go b/cmd/server/session.go
+index 3bb9d99..c9cefaa 100644
+--- a/cmd/server/session.go
++++ b/cmd/server/session.go
+@@ -28,6 +28,7 @@ type Session struct {
+ 	client *whatsmeow.Client
+ 	reg    *callRegistry
+ 
++	attempt          *pairingAttempt
+ 	pairingCompleted bool
+ 	unlinking        bool
+ 	target           *targetPairing
+@@ -47,7 +48,7 @@ func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client)
+ 		auth:   AuthSnapshot{State: "connecting"},
+ 		reg:    newCallRegistry(),
+ 	}
+-	client.AddEventHandler(s.handleEvent)
++	s.installClient(client)
+ 	return s
+ }
+ 
+@@ -214,63 +215,6 @@ func (s *Session) connect(ctx context.Context) error {
+ 	return s.startPairing(ctx)
+ }
+ 
+-func (s *Session) startPairing(ctx context.Context) error {
+-	ctx, cancel := context.WithCancel(ctx)
+-	s.mu.Lock()
+-	if s.pairingCancel != nil {
+-		s.pairingCancel()
+-	}
+-	s.pairingCompleted = false
+-	s.pairingCancel = cancel
+-	s.mu.Unlock()
+-	qrChan, err := s.client.GetQRChannel(ctx)
+-	if err != nil {
+-		return err
+-	}
+-	if err := s.client.Connect(); err != nil {
+-		return err
+-	}
+-	done := make(chan struct{})
+-	s.mu.Lock()
+-	s.pairingDone = done
+-	s.mu.Unlock()
+-	go func() {
+-		defer close(done)
+-		for {
+-			var evt whatsmeow.QRChannelItem
+-			select {
+-			case <-ctx.Done():
+-				return
+-			case item, ok := <-qrChan:
+-				if !ok {
+-					return
+-				}
+-				evt = item
+-			}
+-			if ctx.Err() != nil {
+-				return
+-			}
+-			switch evt.Event {
+-			case "code":
+-				s.log.Info("scan the QR code to pair this session")
+-				s.setAuth(AuthSnapshot{State: "qr", QR: evt.Code})
+-				s.mgr.broker.emitSessionQR(s.id, evt.Code)
+-			case "success":
+-				s.mu.Lock()
+-				s.pairingCompleted = true
+-				s.mu.Unlock()
+-				if id := s.client.Store.ID; id != nil {
+-					_ = s.mgr.store.setJID(s.mgr.appCtx, s.id, id.String())
+-				}
+-				s.setAuth(AuthSnapshot{State: "open", Paired: true})
+-			case "timeout":
+-				s.setAuth(AuthSnapshot{State: "logged_out", Paired: false})
+-			}
+-		}
+-	}()
+-	return nil
+-}
+-
+ func (s *Session) setAuth(a AuthSnapshot) {
+ 	s.mu.Lock()
+ 	s.auth = a
+@@ -282,11 +226,11 @@ func (s *Session) setAuth(a AuthSnapshot) {
+ func (s *Session) info() SessionInfo {
+ 	s.mu.Lock()
+ 	a := s.auth
+-	s.mu.Unlock()
+ 	jid := ""
+-	if id := s.client.Store.ID; id != nil {
+-		jid = id.String()
++	if s.attempt.paired && s.client.Store.ID != nil {
++		jid = s.client.Store.ID.String()
+ 	}
++	s.mu.Unlock()
+ 	return SessionInfo{ID: s.id, Name: s.name, JID: jid, State: a.State, Paired: a.Paired || jid != ""}
+ }
+ 
+@@ -317,14 +261,6 @@ func (s *Session) teardownAllCalls() {
+ 	}
+ }
+ 
+-func (s *Session) replaceClient(client *whatsmeow.Client) {
+-	s.cancelTarget()
+-	s.teardownAllCalls()
+-	s.client.Disconnect()
+-	s.client = client
+-	client.AddEventHandler(s.handleEvent)
+-}
+-
+ func (s *Session) shutdown() {
+ 	s.cancelTarget()
+ 	s.teardownAllCalls()
+diff --git a/cmd/server/sessionmanager.go b/cmd/server/sessionmanager.go
+index 9c5f187..88f4686 100644
+--- a/cmd/server/sessionmanager.go
++++ b/cmd/server/sessionmanager.go
+@@ -192,11 +192,13 @@ func (m *SessionManager) Pair(id string) error {
+ 	if s.unlinking {
+ 		return fmt.Errorf("account unlink requires recovery")
+ 	}
+-	if s.client.Store.ID != nil {
+-		return fmt.Errorf("session already paired")
++	s.mu.Lock()
++	protected := s.attempt.writing || s.attempt.paired || s.attempt.cleanup
++	s.mu.Unlock()
++	if protected {
++		return fmt.Errorf("session pairing unavailable")
+ 	}
+-	s.replaceClient(whatsmeow.NewClient(m.container.NewDevice(), m.waLogger))
+-	if err := s.startPairing(m.appCtx); err != nil {
++	if err := s.freshPairing(); err != nil {
+ 		return fmt.Errorf("start pairing: %w", err)
+ 	}
+ 	m.broker.emitSessionList(m.infos())
