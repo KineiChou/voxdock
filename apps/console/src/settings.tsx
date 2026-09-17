@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Alert, Button, SimpleGrid, Stack } from "@mantine/core";
 import type { ConsoleSettings } from "../../../packages/contracts/src/console";
-import type { ConsoleConfigurationView } from "../../../packages/contracts/src/console-configuration";
+import type { ConsoleConfigurationView, ConsoleSettingsOptions } from "../../../packages/contracts/src/console-configuration";
 import { useResource } from "./api";
 import { Fields, Loading, PageTitle, Panel } from "./shared";
 import { CallingControl } from "./calling-control";
@@ -14,6 +14,7 @@ import {
 
 export function Settings() {
   const status = useResource<ConsoleSettings>("/settings");
+  const options = useResource<ConsoleSettingsOptions>("/settings/options");
   const query = useResource<ConsoleConfigurationView>(
     "/settings/configuration",
   );
@@ -39,8 +40,8 @@ export function Settings() {
     s && view
       ? {
           live: [
-            ["Voice", s.live.voice],
-            ["Preferred language", s.live.language],
+            ["Voice", options.data?.voices.find((choice) => choice.value === s.live.voice)?.label ?? s.live.voice],
+            ["Preferred language", options.data?.languages.find((choice) => choice.value === s.live.language)?.label ?? s.live.language],
             ["Model", s.live.model],
             [
               "Live API key",
@@ -106,7 +107,7 @@ export function Settings() {
         {(error || query.error) && (
           <Alert color="red" title="Unable to load settings">
             {(error || query.error)?.message}
-            <Button variant="subtle" onClick={() => void query.refetch()}>
+            <Button variant="subtle" onClick={() => { setError(null); void query.refetch(); }}>
               Try again
             </Button>
           </Alert>

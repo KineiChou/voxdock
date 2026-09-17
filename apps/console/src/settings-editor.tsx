@@ -8,11 +8,11 @@ import {
   Switch,
   TextInput,
 } from "@mantine/core";
-import type { ConsoleConfigurationView } from "../../../packages/contracts/src/console-configuration";
+import type { ConsoleConfigurationView, ConsoleSettingsOptions } from "../../../packages/contracts/src/console-configuration";
 import { useResource } from "./api";
 import { Fields } from "./shared";
 import { useConfigurationForm } from "./configuration-form";
-import { VoiceFields, type SettingsOptions } from "./settings-voice";
+import { VoiceFields } from "./settings-voice";
 
 export const settingsTitles = {
   live: "Voice & conversation",
@@ -33,7 +33,7 @@ export function SettingsEditor({
   onSaved: () => void;
 }) {
   const form = useConfigurationForm(initial);
-  const options = useResource<SettingsOptions>("/settings/options");
+  const options = useResource<ConsoleSettingsOptions>("/settings/options");
   const { settings: s, update } = form;
   return (
     <Modal

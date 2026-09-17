@@ -59,7 +59,7 @@ export function AccountSettings() {
                   "Remote management",
                   query.data.allow_remote_management
                     ? "Allowed"
-                    : "Server only",
+                    : "Local network only",
                 ],
               ]}
             />
@@ -68,7 +68,7 @@ export function AccountSettings() {
         {(error || query.error) && (
           <Failure
             error={(error || query.error)!}
-            retry={() => void query.refetch()}
+            retry={() => { setError(null); void query.refetch(); }}
           />
         )}
         {saved && <Alert color="teal">Account settings saved.</Alert>}
@@ -116,6 +116,7 @@ function AccountForm({
       <form
         onSubmit={async (event) => {
           event.preventDefault();
+          if (busy) return;
           setBusy(true);
           setError(null);
           try {
@@ -168,7 +169,7 @@ function AccountForm({
             />
             <Switch
               label="Allow remote management"
-              description="When off, change settings and connections from the server itself. Calls and call history remain available."
+              description="When off, manage settings and connections from your local network or the server. Calls and call history remain available."
               checked={account.allow_remote_management}
               onChange={(event) => {
                 setAccount({
@@ -180,8 +181,8 @@ function AccountForm({
             {!account.allow_remote_management && (
               <Alert color="orange">
                 Saving this setting will block Settings and Connections
-                management from other devices. You can re-enable it locally on
-                the server.
+                management from public networks. You can re-enable it from your
+                local network or the server.
               </Alert>
             )}
             <PasswordInput

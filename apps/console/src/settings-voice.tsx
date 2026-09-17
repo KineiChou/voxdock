@@ -1,16 +1,11 @@
 import { useState } from "react";
 import { Alert, Button, Select } from "@mantine/core";
+import type { ConsoleSettingsOptions } from "../../../packages/contracts/src/console-configuration";
 import { useResource } from "./api";
 import { Fields, Loading } from "./shared";
 import type { useConfigurationForm } from "./configuration-form";
 
 type Choice = { value: string; label: string };
-export type SettingsOptions = {
-  voices: Choice[];
-  languages: Choice[];
-  allow_custom_voice: boolean;
-  allow_custom_language: boolean;
-};
 
 function SearchableSetting({
   label,
@@ -47,6 +42,9 @@ function SearchableSetting({
       searchable
       searchValue={search}
       onSearchChange={setSearch}
+      filter={({ options, search }) => options.filter((option) =>
+        "value" in option && `${option.label} ${option.value}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
+      )}
       onChange={(next) => {
         if (next) onChange(next);
       }}
@@ -66,7 +64,7 @@ export function VoiceFields({
   options,
 }: {
   form: ReturnType<typeof useConfigurationForm>;
-  options: ReturnType<typeof useResource<SettingsOptions>>;
+  options: ReturnType<typeof useResource<ConsoleSettingsOptions>>;
 }) {
   const live = form.settings.live;
   return (

@@ -1,5 +1,13 @@
 # Engineering record
 
+## Grouped Settings editing and activity chart alignment, 2026-09-17
+
+Settings previously showed all controls as one editable form, making the current configuration hard to scan. It now starts with five summary groups and opens a focused Mantine dialog only after Configure. Each dialog reads the latest revision; cancel discards its state, failed saves retain the draft, and successful saves refresh the summaries. Existing server validation, admission holds, credentials and revision checks remain authoritative. Voice and language suggestions are served by one authenticated API/CLI catalog rather than embedded in the browser; custom values and existing unlisted settings remain usable.
+
+The Overview activity chart's vertical dashed lines did not reliably match date labels. Recharts added plot-edge lines and independently chose grid and axis ticks; its automatic endpoint handling shifted the last mobile label away from the corresponding grid line. At 390px the original date label appeared at x277.699 while its line stayed at x294. The chart now uses `syncWithTicks` and a shared numeric tick interval based on its measured width. Compact MM-DD labels preserve room; tooltips retain full dates. No chart library or custom cursor was added.
+
+Verification: TypeScript, production build, 237 account-free tests and the CLI/service smoke passed. Browser checks at desktop and 390px cover read-only summaries, focused editing, voice/name/locale search, cancellation, persisted saves and a concurrent API edit rejected without losing the browser draft. Grid and tick coordinates match across Today/7/30 days and 390-to-1280px resize; tooltip dates remain complete. No real account settings, paid voice calls or provider voice acceptance were exercised for this UI change.
+
 ## Unlinking the last active channel, 2026-09-17
 
 A deployed operator received `invalid_configuration` immediately after confirming WhatsApp unlink. With global calling enabled and WhatsApp as the only channel, unlink correctly disabled the channel and target, but configuration validation rejected the resulting lack of an enabled target before any logout was sent. The old unlink fixtures and synthetic browser preview left global calling disabled, so their passing results did not cover this production state. The account and committed configuration remained unchanged.
