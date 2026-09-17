@@ -18,6 +18,10 @@ export function endSession() {
   onUnauthorized();
 }
 const friendlyErrors: Record<string, string> = {
+  whatsapp_unlink_unconfirmed:
+    "Sign-out could not be confirmed. WhatsApp calling and your receiving number are disabled. Check the connection and retry unlinking.",
+  account_unlink_unavailable:
+    "Account unlinking is unavailable. Check the WhatsApp service on your server and try again.",
   target_pairing_not_found:
     "This pairing attempt is no longer available. Start again.",
   target_pairing_active:

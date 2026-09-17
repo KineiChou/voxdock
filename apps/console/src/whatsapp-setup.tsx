@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, type Query } from "@tanstack/react-query";
 import {
-  Accordion,
   Alert,
   Button,
   Code,
@@ -20,6 +19,7 @@ import {
   type ConnectionFlow,
 } from "./connection-login";
 import { Failure, Fields, Loading } from "./shared";
+import { WhatsAppAccount } from "./whatsapp-account";
 import type {
   WhatsAppSetup as Setup,
   TargetPairing as Pairing,
@@ -31,6 +31,9 @@ const pairingPath = "/connections/whatsapp/target-pairings";
 export function WhatsAppSetup() {
   const setup = useResource<Setup>(setupPath);
   const [opened, setOpened] = useState(false);
+  const [confirmUnlink, setConfirmUnlink] = useState(false);
+  const [unlinked, setUnlinked] = useState(false);
+  const [loginKey, setLoginKey] = useState(0);
   const [method, setMethod] = useState<"message" | "call">("message");
   const [pairing, setPairing] = useState<Pairing | null>(null);
   const [connection, setConnection] = useState<ConnectionFlow | null>(null);
@@ -81,6 +84,49 @@ export function WhatsAppSetup() {
       setBusy(false);
     }
   }
+  async function unlink() {
+    if (
+      !setup.data?.linked || busy || connectionBusy || activePairing(pairing) ||
+      (connection && !connectionTerminal(connection))
+    ) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await api<{ unlinked: boolean }>("/connections/whatsapp/unlink", {
+        method: "POST",
+        body: "{}",
+      });
+      if (!result.unlinked) throw new ApiError(409, "whatsapp_unlink_unconfirmed");
+      await queryClient.cancelQueries({ queryKey: ["target-pairing"] });
+      queryClient.removeQueries({ queryKey: ["target-pairing"] });
+      const whatsappFlows = {
+        predicate: (query: Query) =>
+          query.queryKey[0] === "connection-flow" &&
+          ((query.state.data as ConnectionFlow | undefined)?.channel === "whatsapp" ||
+            query.queryKey[1] === connection?.id),
+      };
+      await queryClient.cancelQueries(whatsappFlows);
+      queryClient.removeQueries(whatsappFlows);
+      setPairing(null);
+      setConnection(null);
+      setLoginKey((key) => key + 1);
+      setConfirmUnlink(false);
+      setUnlinked(true);
+      queryClient.setQueryData<Setup>([setupPath], (previous) => previous && ({
+        ...previous,
+        linked: false,
+        connected: false,
+        account_phone: null,
+        target: previous.target ? { ...previous.target, enabled: false } : null,
+      }));
+    } catch (cause) {
+      setError(cause as Error);
+      setConfirmUnlink(false);
+    } finally {
+      await refresh();
+      setBusy(false);
+    }
+  }
   async function close() {
     setBusy(true);
     setError(null);
@@ -121,6 +167,8 @@ export function WhatsAppSetup() {
       setPairing(null);
       setConnection(null);
       setOpened(false);
+      setConfirmUnlink(false);
+      setUnlinked(false);
       await refresh();
     } catch (cause) {
       setError(cause as Error);
@@ -139,8 +187,16 @@ export function WhatsAppSetup() {
       {current && (
         <Fields
           rows={[
-            ["Connected number", current.account_phone ?? "Not connected"],
-            ["Receive calls at", current.target?.phone ?? "Not paired"],
+            ["Calling account", current.account_phone ?? "Not linked"],
+            [
+              "Connection",
+              current.connected ? "Connected" : current.linked ? "Offline · account linked" : "Not linked",
+            ],
+            [
+              current.target && !current.target.enabled
+                ? "Previously used receiving number" : "Receive calls at",
+              current.target?.phone ?? "Not paired",
+            ],
             [
               "Receiving number enabled",
               current.target?.enabled ? "Yes" : "No",
@@ -181,13 +237,34 @@ export function WhatsAppSetup() {
                 <Stepper.Step label="Link account" />
                 <Stepper.Step label="Pair your number" />
               </Stepper>
-              {linking ? (
+              {current.linked && (
+                <WhatsAppAccount
+                  phone={current.account_phone}
+                  connected={current.connected}
+                  disabled={busy || connectionBusy || activePairing(pairing) ||
+                    !!(connection && !connectionTerminal(connection))}
+                  confirming={confirmUnlink}
+                  busy={busy}
+                  onConfirmChange={setConfirmUnlink}
+                  onUnlink={() => void unlink()}
+                />
+              )}
+              {unlinked && !current.linked && (
+                <Alert color="teal">
+                  Account unlinked. Scan a new QR code, then verify the number
+                  where you want to receive calls. Your call history is saved.
+                </Alert>
+              )}
+              {!confirmUnlink && (linking ? (
                 <>
                   <Text>
-                    Link the WhatsApp account VoxDock will use to call you. Your
-                    receiving phone must use a different WhatsApp account.
+                    {current.linked
+                      ? "Reconnect your linked account to continue."
+                      : "Link the WhatsApp account VoxDock will use to call you."}{" "}
+                    Your receiving phone must use a different WhatsApp account.
                   </Text>
                   <ConnectionLogin
+                    key={loginKey}
                     channel="whatsapp"
                     authenticated={false}
                     onFlowChange={setConnection}
@@ -196,17 +273,13 @@ export function WhatsAppSetup() {
                 </>
               ) : (
                 <>
-                  <Text size="sm">
-                    Calling from{" "}
-                    <strong>
-                      {current.account_phone ?? "your linked account"}
-                    </strong>
-                  </Text>
                   {current.target && (
                     <Text size="sm">
-                      Current receiving number:{" "}
-                      <strong>{current.target.phone}</strong>. It stays in place
-                      until you confirm a replacement.
+                      {current.target.enabled ? "Current receiving number: " : "Previously used receiving number: "}
+                      <strong>{current.target.phone}</strong>.
+                      {current.target.enabled
+                        ? " It stays in place until you confirm a replacement."
+                        : " Verify your receiving number to enable calls again."}
                     </Text>
                   )}
                   {!current.pairing_available && (
@@ -354,22 +427,8 @@ export function WhatsAppSetup() {
                       </Text>
                     </>
                   )}
-                  {!activePairing(pairing) && (
-                    <Accordion variant="separated">
-                      <Accordion.Item value="account">
-                        <Accordion.Control>Linked account</Accordion.Control>
-                        <Accordion.Panel>
-                          <ConnectionLogin
-                            channel="whatsapp"
-                            authenticated={true}
-                            onBusyChange={setConnectionBusy}
-                          />
-                        </Accordion.Panel>
-                      </Accordion.Item>
-                    </Accordion>
-                  )}
                 </>
-              )}
+              ))}
             </>
           )}
           <Button
