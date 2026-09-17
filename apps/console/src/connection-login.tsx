@@ -14,7 +14,7 @@ import QRCode from "qrcode";
 import { api, ApiError, queryClient } from "./api";
 import { Failure, Status } from "./shared";
 
-type Flow = {
+export type ConnectionFlow = {
   id: string;
   channel: string;
   state:
@@ -30,16 +30,20 @@ type Flow = {
   error?: string;
   qr?: string;
 };
-const terminal = (flow: Flow) =>
+export const connectionTerminal = (flow: ConnectionFlow) =>
   ["connected", "cancelled", "expired", "failed"].includes(flow.state);
 export function ConnectionLogin({
   channel,
   authenticated,
+  onFlowChange,
+  onBusyChange,
 }: {
   channel: "telegram" | "whatsapp";
   authenticated: boolean;
+  onFlowChange?: (flow: ConnectionFlow | null) => void;
+  onBusyChange?: (busy: boolean) => void;
 }) {
-  const [flow, setFlow] = useState<Flow | null>(null);
+  const [flow, setFlow] = useState<ConnectionFlow | null>(null);
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
@@ -49,19 +53,26 @@ export function ConnectionLogin({
   const poll = useQuery({
     queryKey: ["connection-flow", flow?.id],
     queryFn: ({ signal }) =>
-      api<Flow>(`/connections/flows/${encodeURIComponent(flow!.id)}`, {
-        signal,
-        cache: "no-store",
-      }),
-    enabled: !!flow && !terminal(flow),
+      api<ConnectionFlow>(
+        `/connections/flows/${encodeURIComponent(flow!.id)}`,
+        {
+          signal,
+          cache: "no-store",
+        },
+      ),
+    enabled: !!flow && !connectionTerminal(flow),
     refetchInterval: 2000,
     retry: false,
   });
   useEffect(() => {
     if (poll.data) {
       setFlow(poll.data);
-      if (terminal(poll.data))
+      if (connectionTerminal(poll.data))
         void queryClient.invalidateQueries({ queryKey: ["/connections"] });
+      if (poll.data.state === "connected")
+        void queryClient.invalidateQueries({
+          queryKey: ["/connections/whatsapp/setup"],
+        });
     }
   }, [poll.data]);
   useEffect(() => {
@@ -88,7 +99,7 @@ export function ConnectionLogin({
     setBusy(true);
     setError(null);
     try {
-      const result = await api<Flow | undefined>(path, {
+      const result = await api<ConnectionFlow | undefined>(path, {
         method: "POST",
         body: JSON.stringify(body),
         cache: "no-store",
@@ -97,13 +108,23 @@ export function ConnectionLogin({
       setCode("");
       setPassword("");
       await queryClient.invalidateQueries({ queryKey: ["/connections"] });
+      await queryClient.invalidateQueries({
+        queryKey: ["/connections/whatsapp/setup"],
+      });
     } catch (error) {
       setError(error as Error);
     } finally {
       setBusy(false);
     }
   }
-  const active = flow && !terminal(flow);
+  useEffect(() => {
+    onFlowChange?.(flow);
+  }, [flow, onFlowChange]);
+  useEffect(() => {
+    onBusyChange?.(busy);
+    return () => onBusyChange?.(false);
+  }, [busy, onBusyChange]);
+  const active = flow && !connectionTerminal(flow);
   return (
     <Stack mt="lg" gap="sm">
       {error && <Failure error={error} />}
