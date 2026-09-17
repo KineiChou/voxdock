@@ -1,5 +1,17 @@
 # Engineering record
 
+## WhatsApp account unlink and fresh setup, 2026-09-17
+
+The Configure WhatsApp dialog now includes a secondary Unlink account action with an inline confirmation. It signs out only the server device, keeps call history and returns to QR setup. Existing target identifiers and phone references remain disabled until the operator verifies and confirms a receiving account again. The CLI and authenticated API call the same backend operation; ordinary Disconnect still retains login credentials.
+
+The previous disconnect operation could not support testing setup from a fresh account because it only closed the socket. Unlink now commits disabled WhatsApp settings and targets before requesting platform logout, holding admission throughout both operations. An unconfirmed logout never rolls those restrictions back and persists a recovery pause. Runtime installation failure before logout leaves the old account untouched.
+
+Pinned whatsmeow acknowledges device removal before deleting local keys. A durable sidecar marker records that boundary so a local cleanup failure can resume after restart without blindly repeating remote logout. Pending cleanup blocks reconnect and call admission. Active calls, target verification and unfinished QR authorization reject unlink; completed QR callbacks and event handlers are drained before replacing the session. Legacy sidecar logout/delete also use this path to prevent bypassing recovery. The fourth WaCalls patch is required.
+
+Review found that connectivity alone hid the unlink action for a linked offline account, and missing local keys could hide an incomplete unlink. The backend now projects linked, connected and unlink-pending states separately, and the dialog offers cleanup recovery even after local keys are gone. Unknown platform outcomes still require an operator check and service restart before retry; no account-free test proves real logout interoperability.
+
+Validation: typechecking, 215 account-free TypeScript tests, production console build, the real CLI/service smoke, pinned-source Go server/call tests, targeted unlink race tests and a no-CGO server build passed. A synthetic browser flow covered cancel, unlink, fresh QR and receiving-number confirmation, with no browser errors; backend tests verified preserved call history. Desktop and 390×660 layouts were inspected. Real phone scanning, verification messages/calls and platform logout remain handset acceptance work.
+
 ## Guided WhatsApp setup and continuous availability, 2026-09-17
 
 Connections now uses a two-step flow: link the server account with the controlled QR flow, then verify a separate receiving account by a random message code or an incoming call. The server chooses internal application references, preserves existing target/principal identities and commits only an explicitly confirmed provider-observed candidate. This avoids asking operators to invent opaque IDs. The observer never answers verification calls or sends messages; normal runtime ownership resumes after confirmed cleanup. Telegram retains its documented numeric-ID fallback.

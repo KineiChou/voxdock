@@ -1,0 +1,727 @@
+diff --git a/cmd/server/accountunlink.go b/cmd/server/accountunlink.go
+new file mode 100644
+index 0000000..a49d5c7
+--- /dev/null
++++ b/cmd/server/accountunlink.go
+@@ -0,0 +1,200 @@
++package main
++
++import (
++	"context"
++	"database/sql"
++	"encoding/json"
++	"errors"
++	"io"
++	"net/http"
++	"time"
++
++	"go.mau.fi/whatsmeow"
++	"go.mau.fi/whatsmeow/store"
++)
++
++var errUnlinkBusy = errors.New("session has active calls or pairing")
++var errUnlinkRecovery = errors.New("account unlink unconfirmed")
++
++func (m *SessionManager) unlinkState(ctx context.Context, id string) (bool, bool, error) {
++	var confirmed bool
++	err := m.store.db.QueryRowContext(ctx, `SELECT remote_confirmed FROM account_unlinks WHERE session_id = ?`, id).Scan(&confirmed)
++	if errors.Is(err, sql.ErrNoRows) {
++		return false, false, nil
++	}
++	return err == nil, confirmed, err
++}
++
++// Logout calls Device.Delete only after the server acknowledges remove-companion-device.
++// Persist that boundary before deleting local keys so cleanup can resume after restart.
++type unlinkDeviceContainer struct {
++	store.DeviceContainer
++	manager   *SessionManager
++	sessionID string
++}
++
++func (c *unlinkDeviceContainer) DeleteDevice(ctx context.Context, device *store.Device) error {
++	_, err := c.manager.store.db.ExecContext(ctx, `UPDATE account_unlinks SET remote_confirmed = 1 WHERE session_id = ?`, c.sessionID)
++	if err != nil {
++		return err
++	}
++	return c.DeviceContainer.DeleteDevice(ctx, device)
++}
++
++func (s *server) handleConnectionUnlink(w http.ResponseWriter, r *http.Request) {
++	w.Header().Set("Cache-Control", "no-store")
++	body, err := io.ReadAll(io.LimitReader(r.Body, 1025))
++	id := r.PathValue("sid")
++	var object map[string]json.RawMessage
++	if err != nil || len(body) > 1024 || !connectionID.MatchString(id) || json.Unmarshal(body, &object) != nil || object == nil || len(object) != 0 {
++		writeJSON(w, 400, map[string]string{"error": "expected empty object and valid session"})
++		return
++	}
++	connectionMu.Lock()
++	defer connectionMu.Unlock()
++	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
++	defer cancel()
++	sess, err := s.sessions.unlinkAccount(ctx, id)
++	if err != nil {
++		code := http.StatusBadGateway
++		state := "unlink_recovery_required"
++		if errors.Is(err, errUnlinkBusy) {
++			code = http.StatusConflict
++			state = "busy"
++		}
++		writeJSON(w, code, map[string]string{"error": err.Error(), "state": state})
++		return
++	}
++	s.connectionStatus(w, sess)
++}
++
++func (m *SessionManager) unlinkAccount(ctx context.Context, id string) (*Session, error) {
++	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
++	defer cancel()
++	return m.unlinkAccountUsing(ctx, id, func(ctx context.Context, client *whatsmeow.Client) error {
++		if !client.IsConnected() {
++			if err := client.ConnectContext(ctx); err != nil {
++				return err
++			}
++		}
++		ticker := time.NewTicker(50 * time.Millisecond)
++		defer ticker.Stop()
++		for !client.IsLoggedIn() {
++			select {
++			case <-ctx.Done():
++				return ctx.Err()
++			case <-ticker.C:
++			}
++		}
++		return client.Logout(ctx)
++	})
++}
++
++// Called under connectionMu. The injected operation is the real pinned Logout in production.
++func (m *SessionManager) unlinkAccountUsing(ctx context.Context, id string, logout func(context.Context, *whatsmeow.Client) error) (*Session, error) {
++	sess, exists := m.Get(id)
++	if !exists {
++		pending, _, err := m.unlinkState(ctx, id)
++		if err != nil || pending {
++			return nil, errUnlinkRecovery
++		}
++		return nil, nil
++	}
++	sess.mu.Lock()
++	sess.expireTargetLocked(time.Now())
++	if (sess.pairingDone != nil && !sess.pairingCompleted) || sess.reg.count() != 0 || (sess.target != nil && (sess.target.State == "waiting" || sess.target.State == "candidate")) {
++		sess.mu.Unlock()
++		return nil, errUnlinkBusy
++	}
++	sess.unlinking = true // Reserve before releasing the same lock used to admit calls.
++	if sess.pairingCancel != nil {
++		sess.pairingCancel()
++		sess.pairingCancel = nil
++	}
++	done := sess.pairingDone
++	sess.mu.Unlock()
++	if done != nil {
++		select {
++		case <-done:
++		case <-ctx.Done():
++			sess.setAuth(AuthSnapshot{State: "unlink_recovery_required", Paired: sess.client.Store.ID != nil})
++			return nil, errUnlinkRecovery
++		}
++	}
++	// RemoveEventHandlers takes the dispatch write lock, joining in-flight callbacks.
++	sess.client.RemoveEventHandlers()
++	sess.cancelTarget()
++	sess.setAuth(AuthSnapshot{State: "unlink_recovery_required", Paired: sess.client.Store.ID != nil})
++	pending, confirmed, err := m.unlinkState(ctx, id)
++	if err != nil {
++		return nil, errUnlinkRecovery
++	}
++	if !pending {
++		confirmed = sess.client.Store.ID == nil
++		tx, err := m.store.db.BeginTx(ctx, nil)
++		if err != nil {
++			return nil, errUnlinkRecovery
++		}
++		jid := ""
++		if sess.client.Store.ID != nil {
++			jid = sess.client.Store.ID.String()
++		}
++		if _, err = tx.ExecContext(ctx, `UPDATE sessions SET jid = ? WHERE id = ?`, jid, id); err == nil {
++			_, err = tx.ExecContext(ctx, `INSERT INTO account_unlinks(session_id, remote_confirmed) VALUES (?, ?)`, id, confirmed)
++		}
++		if err != nil {
++			tx.Rollback()
++			return nil, errUnlinkRecovery
++		}
++		if err = tx.Commit(); err != nil {
++			return nil, errUnlinkRecovery
++		}
++	}
++	if !confirmed {
++		if sess.client.Store.ID == nil {
++			return nil, errUnlinkRecovery
++		}
++		device := sess.client.Store
++		original := device.Container
++		device.Container = &unlinkDeviceContainer{DeviceContainer: original, manager: m, sessionID: id}
++		err = logout(ctx, sess.client)
++		device.Container = original
++		sess.client.Disconnect()
++		if err != nil {
++			return nil, errUnlinkRecovery
++		}
++		_, confirmed, err = m.unlinkState(ctx, id)
++		if err != nil || !confirmed {
++			return nil, errUnlinkRecovery
++		}
++	}
++	sess.client.Disconnect()
++	if sess.client.Store.ID != nil {
++		if err := sess.client.Store.Delete(ctx); err != nil {
++			return nil, errUnlinkRecovery
++		}
++	}
++	// Clear the application JID and recovery marker atomically; never delete call history.
++	tx, err := m.store.db.BeginTx(ctx, nil)
++	if err != nil {
++		return nil, errUnlinkRecovery
++	}
++	defer tx.Rollback()
++	if _, err = tx.ExecContext(ctx, `UPDATE sessions SET jid = NULL WHERE id = ?`, id); err != nil {
++		return nil, errUnlinkRecovery
++	}
++	if _, err = tx.ExecContext(ctx, `DELETE FROM account_unlinks WHERE session_id = ?`, id); err != nil {
++		return nil, errUnlinkRecovery
++	}
++	if err = tx.Commit(); err != nil {
++		return nil, errUnlinkRecovery
++	}
++	fresh := newSession(m, id, sess.name, whatsmeow.NewClient(m.container.NewDevice(), m.waLogger))
++	fresh.auth = AuthSnapshot{State: "unlinked", Paired: false}
++	m.mu.Lock()
++	m.sessions[id] = fresh
++	m.mu.Unlock()
++	m.broker.emitAuthState(id, fresh.auth)
++	m.broker.emitSessionList(m.infos())
++	return fresh, nil
++}
+diff --git a/cmd/server/accountunlink_test.go b/cmd/server/accountunlink_test.go
+new file mode 100644
+index 0000000..47dcca5
+--- /dev/null
++++ b/cmd/server/accountunlink_test.go
+@@ -0,0 +1,273 @@
++package main
++
++import (
++	"context"
++	"errors"
++	"net/http/httptest"
++	"strings"
++	"testing"
++	"time"
++
++	"go.mau.fi/whatsmeow"
++	"go.mau.fi/whatsmeow/proto/waAdv"
++	"go.mau.fi/whatsmeow/store"
++	"go.mau.fi/whatsmeow/types"
++)
++
++func unlinkRequest(m *SessionManager, id, body string) *httptest.ResponseRecorder {
++	req := httptest.NewRequest("POST", "/", strings.NewReader(body))
++	req.SetPathValue("sid", id)
++	out := httptest.NewRecorder()
++	(&server{sessions: m}).handleConnectionUnlink(out, req)
++	return out
++}
++func TestAccountUnlinkStrictAndRepeat(t *testing.T) {
++	m := newTestManager(t)
++	for _, body := range []string{"", "null", "[]", `{"unexpected":true}`, "{}{}"} {
++		if got := unlinkRequest(m, "missing", body).Code; got != 400 {
++			t.Fatalf("body %q: %d", body, got)
++		}
++	}
++	if unlinkRequest(m, "../bad", "{}").Code != 400 {
++		t.Fatal("invalid ID accepted")
++	}
++	if out := unlinkRequest(m, "missing", "{}"); out.Code != 200 || !strings.Contains(out.Body.String(), `"state":"missing"`) {
++		t.Fatal(out)
++	}
++	sess := m.addUnconnected(t, "test")
++	for range 2 {
++		out := unlinkRequest(m, sess.id, "{}")
++		if out.Code != 200 || !strings.Contains(out.Body.String(), `"state":"unlinked"`) || !strings.Contains(out.Body.String(), `"paired":false`) {
++			t.Fatal(out)
++		}
++	}
++	fresh, _ := m.Get(sess.id)
++	if fresh == sess || fresh.client.Store.ID != nil || fresh.client.Store.Deleted {
++		t.Fatal("must install fresh usable device")
++	}
++	rows, err := m.store.list(context.Background())
++	if err != nil || len(rows) != 1 || rows[0].JID != "" {
++		t.Fatalf("stale session JID: %+v %v", rows, err)
++	}
++	m.sessions = map[string]*Session{}
++	m.order = nil
++	if err := m.Restore(context.Background()); err != nil {
++		t.Fatal(err)
++	}
++	if len(m.infos()) != 0 {
++		t.Fatal("unlinked account restored")
++	}
++}
++func TestAccountUnlinkBusy(t *testing.T) {
++	for _, reason := range []string{"call", "target", "login"} {
++		t.Run(reason, func(t *testing.T) {
++			m := newTestManager(t)
++			s := m.addUnconnected(t, "test")
++			switch reason {
++			case "call":
++				s.reg.add("active", &activeCall{})
++			case "target":
++				s.target = &targetPairing{State: "waiting", ExpiresAt: time.Now().Add(time.Minute)}
++			case "login":
++				s.pairingDone = make(chan struct{})
++			}
++			if out := unlinkRequest(m, s.id, "{}"); out.Code != 409 {
++				t.Fatal(out)
++			}
++			if s.unlinking {
++				t.Fatal("busy session mutated")
++			}
++		})
++	}
++}
++func pairedUnlinkTestSession(t *testing.T, m *SessionManager) *Session {
++	s := m.addUnconnected(t, "paired")
++	jid := types.NewJID("15551234567", types.DefaultUserServer)
++	s.client.Store.ID = &jid
++	s.client.Store.Account = &waAdv.ADVSignedDeviceIdentity{Details: []byte{}, AccountSignature: make([]byte, 64), AccountSignatureKey: make([]byte, 32), DeviceSignature: make([]byte, 64)}
++	if err := s.client.Store.Save(context.Background()); err != nil {
++		t.Fatal(err)
++	}
++	if err := m.store.setJID(context.Background(), s.id, jid.String()); err != nil {
++		t.Fatal(err)
++	}
++	return s
++}
++func TestAccountUnlinkNetworkFailurePreservesCredentialsAndBlocksReuse(t *testing.T) {
++	m := newTestManager(t)
++	s := pairedUnlinkTestSession(t, m)
++	_, err := m.unlinkAccountUsing(context.Background(), s.id, func(context.Context, *whatsmeow.Client) error { return errors.New("network failure") })
++	if !errors.Is(err, errUnlinkRecovery) || s.client.Store.ID == nil {
++		t.Fatal("ambiguous logout erased device")
++	}
++	pending, confirmed, err := m.unlinkState(context.Background(), s.id)
++	if err != nil || !pending || confirmed {
++		t.Fatal("missing recovery journal")
++	}
++	if _, err := s.startOutgoing(context.Background(), types.EmptyJID, false); err == nil {
++		t.Fatal("call allowed during recovery")
++	}
++	req := httptest.NewRequest("POST", "/", nil)
++	req.SetPathValue("sid", s.id)
++	out := httptest.NewRecorder()
++	(&server{sessions: m}).handleConnectionConnect(out, req)
++	if out.Code != 409 {
++		t.Fatal("reconnect allowed during recovery")
++	}
++}
++
++type failingDeleteContainer struct{ store.DeviceContainer }
++
++func (c failingDeleteContainer) DeleteDevice(context.Context, *store.Device) error {
++	return errors.New("local delete failure")
++}
++func TestAccountUnlinkConfirmedCleanupRetryAndIsolation(t *testing.T) {
++	ctx := context.Background()
++	m := newTestManager(t)
++	s := pairedUnlinkTestSession(t, m)
++	other := m.addUnconnected(t, "other")
++	otherJID := types.NewJID("15557654321", types.DefaultUserServer)
++	other.client.Store.ID = &otherJID
++	other.client.Store.Account = &waAdv.ADVSignedDeviceIdentity{Details: []byte{}, AccountSignature: make([]byte, 64), AccountSignatureKey: make([]byte, 32), DeviceSignature: make([]byte, 64)}
++	if err := other.client.Store.Save(ctx); err != nil {
++		t.Fatal(err)
++	}
++	oldJID := *s.client.Store.ID
++	m.broker.upsertCall(CallRecord{SessionID: s.id, CallID: "history", Status: StatusEnded})
++	base := s.client.Store.Container
++	s.client.Store.Container = failingDeleteContainer{base}
++	calls := 0
++	_, err := m.unlinkAccountUsing(ctx, s.id, func(ctx context.Context, c *whatsmeow.Client) error { calls++; return c.Store.Delete(ctx) })
++	if !errors.Is(err, errUnlinkRecovery) {
++		t.Fatal("cleanup error reported success")
++	}
++	pending, confirmed, err := m.unlinkState(ctx, s.id)
++	if err != nil || !pending || !confirmed {
++		t.Fatal("remote acknowledgment lost")
++	}
++	s.client.Store.Container = base
++	fresh, err := m.unlinkAccountUsing(ctx, s.id, func(context.Context, *whatsmeow.Client) error {
++		t.Fatal("remote logout repeated after confirmed ack")
++		return nil
++	})
++	if err != nil || fresh.client.Store.ID != nil || calls != 1 {
++		t.Fatal("cleanup retry failed", err)
++	}
++	if got, ok := m.Get(other.id); !ok || got != other {
++		t.Fatal("unrelated session changed")
++	}
++	if device, err := m.container.GetDevice(ctx, oldJID); err != nil || device != nil {
++		t.Fatal("old device survived", err)
++	}
++	if device, err := m.container.GetDevice(ctx, otherJID); err != nil || device == nil {
++		t.Fatal("unrelated device removed", err)
++	}
++	if record, ok := m.broker.getCall("history"); !ok || record == nil {
++		t.Fatal("history lost")
++	}
++	rows, _ := m.store.list(ctx)
++	for _, r := range rows {
++		if r.ID == s.id && r.JID != "" {
++			t.Fatal("old JID persisted")
++		}
++	}
++}
++func TestAccountUnlinkRestoreRecoveryDoesNotConnect(t *testing.T) {
++	ctx := context.Background()
++	m := newTestManager(t)
++	s := pairedUnlinkTestSession(t, m)
++	if _, err := m.store.db.ExecContext(ctx, `INSERT INTO account_unlinks(session_id,remote_confirmed) VALUES (?,1)`, s.id); err != nil {
++		t.Fatal(err)
++	}
++	m.sessions = map[string]*Session{}
++	m.order = nil
++	if err := m.Restore(ctx); err != nil {
++		t.Fatal(err)
++	}
++	restored, ok := m.Get(s.id)
++	if !ok || !restored.unlinking || restored.auth.State != "unlink_recovery_required" || restored.client.IsConnected() {
++		t.Fatal("unsafe restore")
++	}
++	fresh, err := m.unlinkAccountUsing(ctx, s.id, func(context.Context, *whatsmeow.Client) error {
++		t.Fatal("confirmed unlink contacted network")
++		return nil
++	})
++	if err != nil || fresh.client.Store.ID != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestAccountUnlinkFinalStoreFailureKeepsVisibleRecovery(t *testing.T) {
++	ctx := context.Background()
++	m := newTestManager(t)
++	s := pairedUnlinkTestSession(t, m)
++	_, err := m.store.db.ExecContext(ctx, `CREATE TRIGGER fail_unlink_clear BEFORE DELETE ON account_unlinks BEGIN SELECT RAISE(FAIL, 'test failure'); END`)
++	if err != nil {
++		t.Fatal(err)
++	}
++	_, err = m.unlinkAccountUsing(ctx, s.id, func(ctx context.Context, c *whatsmeow.Client) error { return c.Store.Delete(ctx) })
++	if !errors.Is(err, errUnlinkRecovery) || s.client.Store.ID != nil {
++		t.Fatal("expected confirmed remote unlink and failed final cleanup")
++	}
++	out := httptest.NewRecorder()
++	(&server{sessions: m}).connectionStatus(out, s)
++	if !strings.Contains(out.Body.String(), `"state":"unlink_recovery_required"`) || !strings.Contains(out.Body.String(), `"paired":false`) {
++		t.Fatal(out.Body.String())
++	}
++	m.sessions = map[string]*Session{}
++	m.order = nil
++	if err := m.Restore(ctx); err != nil {
++		t.Fatal(err)
++	}
++	restored, _ := m.Get(s.id)
++	out = httptest.NewRecorder()
++	(&server{sessions: m}).connectionStatus(out, restored)
++	if !strings.Contains(out.Body.String(), `"state":"unlink_recovery_required"`) {
++		t.Fatal(out.Body.String())
++	}
++	if _, err := m.store.db.ExecContext(ctx, `DROP TRIGGER fail_unlink_clear`); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := m.unlinkAccountUsing(ctx, s.id, func(context.Context, *whatsmeow.Client) error { t.Fatal("must only finish local cleanup"); return nil }); err != nil {
++		t.Fatal(err)
++	}
++}
++func TestAccountUnlinkJoinsCompletedPairingAndReservesCallAdmission(t *testing.T) {
++	ctx := context.Background()
++	m := newTestManager(t)
++	s := pairedUnlinkTestSession(t, m)
++	pairingCtx, cancel := context.WithCancel(ctx)
++	done := make(chan struct{})
++	s.pairingCancel = cancel
++	s.pairingDone = done
++	s.pairingCompleted = true
++	go func() { <-pairingCtx.Done(); _ = m.store.setJID(ctx, s.id, s.client.Store.ID.String()); close(done) }()
++	entered := make(chan struct{})
++	release := make(chan struct{})
++	result := make(chan error, 1)
++	go func() {
++		_, err := m.unlinkAccountUsing(ctx, s.id, func(ctx context.Context, c *whatsmeow.Client) error {
++			close(entered)
++			<-release
++			return c.Store.Delete(ctx)
++		})
++		result <- err
++	}()
++	<-entered
++	select {
++	case <-done:
++	default:
++		t.Fatal("QR worker not drained")
++	}
++	if _, err := s.startOutgoing(ctx, types.EmptyJID, false); err == nil {
++		t.Fatal("call raced unlink")
++	}
++	close(release)
++	if err := <-result; err != nil {
++		t.Fatal(err)
++	}
++	rows, err := m.store.list(ctx)
++	if err != nil || len(rows) != 1 || rows[0].JID != "" {
++		t.Fatal("late QR worker revived old JID")
++	}
++}
+diff --git a/cmd/server/connection.go b/cmd/server/connection.go
+index 8d609f8..fb5d024 100644
+--- a/cmd/server/connection.go
++++ b/cmd/server/connection.go
+@@ -21,6 +21,11 @@ func (s *server) connectionStatus(w http.ResponseWriter, sess *Session) {
+ 	sess.mu.Lock()
+ 	a := sess.auth
+ 	sess.mu.Unlock()
++	pending, _, err := sess.mgr.unlinkState(context.Background(), sess.id)
++	if pending || err != nil {
++		a.State = "unlink_recovery_required"
++		a.QR = ""
++	}
+ 	if a.State == "open" && (!sess.client.IsConnected() || !sess.client.IsLoggedIn()) {
+ 		a.State = "disconnected"
+ 		a.QR = ""
+@@ -57,6 +62,10 @@ func (s *server) handleConnectionConnect(w http.ResponseWriter, r *http.Request)
+ 		sess.setAuth(AuthSnapshot{State: "disconnected"})
+ 		s.sessions.register(sess)
+ 	}
++	if sess.unlinking {
++		writeJSON(w, 409, map[string]string{"error": "account unlink requires recovery", "state": "unlink_recovery_required"})
++		return
++	}
+ 	if sess.reg.count() != 0 {
+ 		writeJSON(w, 409, map[string]string{"error": "session has active calls"})
+ 		return
+@@ -82,6 +91,10 @@ func (s *server) handleConnectionDisconnect(w http.ResponseWriter, r *http.Reque
+ 	defer connectionMu.Unlock()
+ 	sess, _ := s.sessions.Get(r.PathValue("sid"))
+ 	if sess != nil {
++		if sess.unlinking {
++			writeJSON(w, 409, map[string]string{"error": "account unlink requires recovery", "state": "unlink_recovery_required"})
++			return
++		}
+ 		if sess.reg.count() != 0 {
+ 			writeJSON(w, 409, map[string]string{"error": "session has active calls"})
+ 			return
+diff --git a/cmd/server/httpapi.go b/cmd/server/httpapi.go
+index a131ad4..cf635a6 100644
+--- a/cmd/server/httpapi.go
++++ b/cmd/server/httpapi.go
+@@ -20,6 +20,7 @@ func (s *server) routes() http.Handler {
+ 	mux.HandleFunc("GET /api/voxdock/sessions/{sid}", s.handleConnectionStatus)
+ 	mux.HandleFunc("POST /api/voxdock/sessions/{sid}/connect", s.handleConnectionConnect)
+ 	mux.HandleFunc("POST /api/voxdock/sessions/{sid}/disconnect", s.handleConnectionDisconnect)
++	mux.HandleFunc("POST /api/voxdock/sessions/{sid}/unlink", s.handleConnectionUnlink)
+ 	if s.mediaAuth != nil {
+ 		mux.HandleFunc("POST /api/sessions/{sid}/calls/{id}/media-token", s.handleMediaToken)
+ 		mux.HandleFunc("GET /api/sessions/{sid}/calls/{id}/media", s.handleMedia)
+diff --git a/cmd/server/session.go b/cmd/server/session.go
+index eba0ab1..3bb9d99 100644
+--- a/cmd/server/session.go
++++ b/cmd/server/session.go
+@@ -28,11 +28,13 @@ type Session struct {
+ 	client *whatsmeow.Client
+ 	reg    *callRegistry
+ 
+-	target        *targetPairing
+-	mu            sync.Mutex
+-	auth          AuthSnapshot
+-	pairingCancel context.CancelFunc
+-	pairingDone   <-chan struct{}
++	pairingCompleted bool
++	unlinking        bool
++	target           *targetPairing
++	mu               sync.Mutex
++	auth             AuthSnapshot
++	pairingCancel    context.CancelFunc
++	pairingDone      <-chan struct{}
+ }
+ 
+ func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) *Session {
+@@ -100,6 +102,10 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
+ 
+ func (s *Session) startOutgoing(ctx context.Context, peer types.JID, isVideo bool) (string, error) {
+ 	s.mu.Lock()
++	if s.unlinking {
++		s.mu.Unlock()
++		return "", errors.New("account unlink requires recovery")
++	}
+ 	s.expireTargetLocked(time.Now())
+ 	if s.target != nil && (s.target.State == "waiting" || s.target.State == "candidate") {
+ 		s.mu.Unlock()
+@@ -125,6 +131,10 @@ func (s *Session) callForEvent(from types.JID, data *waBinary.Node) (*activeCall
+ 
+ func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
+ 	s.mu.Lock()
++	if s.unlinking {
++		s.mu.Unlock()
++		return
++	}
+ 	if s.consumeTargetCall(ctx, evt) {
+ 		s.mu.Unlock()
+ 		return
+@@ -210,6 +220,7 @@ func (s *Session) startPairing(ctx context.Context) error {
+ 	if s.pairingCancel != nil {
+ 		s.pairingCancel()
+ 	}
++	s.pairingCompleted = false
+ 	s.pairingCancel = cancel
+ 	s.mu.Unlock()
+ 	qrChan, err := s.client.GetQRChannel(ctx)
+@@ -245,6 +256,9 @@ func (s *Session) startPairing(ctx context.Context) error {
+ 				s.setAuth(AuthSnapshot{State: "qr", QR: evt.Code})
+ 				s.mgr.broker.emitSessionQR(s.id, evt.Code)
+ 			case "success":
++				s.mu.Lock()
++				s.pairingCompleted = true
++				s.mu.Unlock()
+ 				if id := s.client.Store.ID; id != nil {
+ 					_ = s.mgr.store.setJID(s.mgr.appCtx, s.id, id.String())
+ 				}
+diff --git a/cmd/server/sessionmanager.go b/cmd/server/sessionmanager.go
+index b7b3697..9c5f187 100644
+--- a/cmd/server/sessionmanager.go
++++ b/cmd/server/sessionmanager.go
+@@ -91,6 +91,31 @@ func (m *SessionManager) Restore(ctx context.Context) error {
+ 		return err
+ 	}
+ 	for _, row := range rows {
++		pending, _, err := m.unlinkState(ctx, row.ID)
++		if err != nil {
++			return err
++		}
++		if pending {
++			device := m.container.NewDevice()
++			if row.JID != "" {
++				jid, err := types.ParseJID(row.JID)
++				if err != nil {
++					return err
++				}
++				stored, err := m.container.GetDevice(ctx, jid)
++				if err != nil {
++					return err
++				}
++				if stored != nil {
++					device = stored
++				}
++			}
++			s := newSession(m, row.ID, row.Name, whatsmeow.NewClient(device, m.waLogger))
++			s.unlinking = true
++			s.auth = AuthSnapshot{State: "unlink_recovery_required", Paired: device.ID != nil}
++			m.register(s)
++			continue
++		}
+ 		if row.JID == "" {
+ 			_ = m.store.delete(ctx, row.ID)
+ 			continue
+@@ -138,49 +163,35 @@ func (m *SessionManager) Create(name string) (string, error) {
+ }
+ 
+ func (m *SessionManager) Delete(ctx context.Context, id string) error {
+-	s, ok := m.Get(id)
+-	if !ok {
+-		return fmt.Errorf("no session %s", id)
++	connectionMu.Lock()
++	defer connectionMu.Unlock()
++	if _, err := m.unlinkAccount(ctx, id); err != nil {
++		return err
+ 	}
+-	if s.client.Store.ID != nil {
+-		if err := s.client.Logout(ctx); err != nil {
+-			m.log.Warn("logout failed; deleting locally", "session", id, "err", err)
+-			_ = m.container.DeleteDevice(ctx, s.client.Store)
+-		}
+-	} else {
+-		s.client.Disconnect()
+-		_ = m.container.DeleteDevice(ctx, s.client.Store)
++	if err := m.store.delete(ctx, id); err != nil {
++		return err
+ 	}
+-	s.teardownAllCalls()
+ 	m.unregister(id)
+-	_ = m.store.delete(ctx, id)
+ 	m.broker.emitSessionList(m.infos())
+-	m.log.Info("session deleted", "session", id)
+ 	return nil
+ }
+-
+ func (m *SessionManager) Logout(ctx context.Context, id string) error {
+-	s, ok := m.Get(id)
+-	if !ok {
+-		return fmt.Errorf("no session %s", id)
+-	}
+-	if s.client.Store.ID != nil {
+-		if err := s.client.Logout(ctx); err != nil {
+-			m.log.Warn("logout failed", "session", id, "err", err)
+-		}
+-	}
+-	s.replaceClient(whatsmeow.NewClient(m.container.NewDevice(), m.waLogger))
+-	_ = m.store.setJID(ctx, id, "")
+-	s.setAuth(AuthSnapshot{State: "logged_out", Paired: false})
+-	m.log.Info("session disconnected", "session", id)
+-	return nil
++	connectionMu.Lock()
++	defer connectionMu.Unlock()
++	_, err := m.unlinkAccount(ctx, id)
++	return err
+ }
+ 
+ func (m *SessionManager) Pair(id string) error {
++	connectionMu.Lock()
++	defer connectionMu.Unlock()
+ 	s, ok := m.Get(id)
+ 	if !ok {
+ 		return fmt.Errorf("no session %s", id)
+ 	}
++	if s.unlinking {
++		return fmt.Errorf("account unlink requires recovery")
++	}
+ 	if s.client.Store.ID != nil {
+ 		return fmt.Errorf("session already paired")
+ 	}
+diff --git a/cmd/server/sessionstore.go b/cmd/server/sessionstore.go
+index 0905fa7..59fab93 100644
+--- a/cmd/server/sessionstore.go
++++ b/cmd/server/sessionstore.go
+@@ -24,6 +24,10 @@ func newSessionStore(ctx context.Context, db *sql.DB) (*sessionStore, error) {
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	_, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS account_unlinks (session_id TEXT PRIMARY KEY, remote_confirmed INTEGER NOT NULL DEFAULT 0)`)
++	if err != nil {
++		return nil, err
++	}
+ 	return &sessionStore{db: db}, nil
+ }
+ 
+diff --git a/cmd/server/targetpairing.go b/cmd/server/targetpairing.go
+index 6c7a0a3..482ca46 100644
+--- a/cmd/server/targetpairing.go
++++ b/cmd/server/targetpairing.go
+@@ -225,7 +225,7 @@ func (s *server) handleTargetPairingStart(w http.ResponseWriter, r *http.Request
+ 	sess.mu.Lock()
+ 	defer sess.mu.Unlock()
+ 	sess.expireTargetLocked(now)
+-	if sess.client.Store.ID == nil || !sess.client.IsConnected() || !sess.client.IsLoggedIn() || sess.reg.count() != 0 || (sess.target != nil && (sess.target.State == "waiting" || sess.target.State == "candidate")) {
++	if sess.unlinking || sess.client.Store.ID == nil || !sess.client.IsConnected() || !sess.client.IsLoggedIn() || sess.reg.count() != 0 || (sess.target != nil && (sess.target.State == "waiting" || sess.target.State == "candidate")) {
+ 		writeJSON(w, 409, map[string]string{"error": "session unavailable"})
+ 		return
+ 	}

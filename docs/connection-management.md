@@ -4,7 +4,7 @@ The authenticated console and bearer administrator API use the same connection s
 
 Telegram login uses phone, code, and optional two-factor password callbacks. Challenges expire after three minutes (maximum five minutes), are single-use per step, and remain only in memory. The session is created exclusively with owner-only permissions inside the managed private directory. Signing in over an existing session is rejected. Disconnect removes the local session file; it does not revoke that device in Telegram's account settings. Cancellation aborts prompts and disconnects the authorization client before releasing the runtime.
 
-WhatsApp management uses a fixed operator-configured private WaCalls origin and session identifier. The browser cannot select an origin or upstream route. The additional controlled patch provides status, connect, and disconnect for that session. Viewing status never creates or resets a session. Connect reuses a paired device; disconnect closes the connection and cancels pending QR pairing while retaining paired device storage. Switching the paired WhatsApp account still requires an operator to revoke its linked device. The unauthenticated sidecar endpoints must stay private.
+WhatsApp management uses a fixed operator-configured private WaCalls origin and session identifier. The browser cannot select an origin or upstream route. The additional controlled patch provides status, connect, and disconnect for that session. Viewing status never creates or resets a session. Connect reuses a paired device; disconnect closes the connection and cancels pending QR pairing while retaining paired device storage. The explicit unlink operation signs out the server device and removes its local credentials so the next connect requires a fresh QR. The bridge disables this channel and receiving targets durably before requesting logout, retaining call history and stable target IDs. Pending/unknown logout cannot silently reactivate the old recipient. The unauthenticated sidecar endpoints must stay private.
 
 All challenge responses use `Cache-Control: no-store`. QR content is returned only by an authenticated challenge response, never logged by the bridge or printed by the patched sidecar. Phone numbers, codes, passwords, and QR payloads must not be included in HTTP request logs or persisted in audit events. Provider errors are replaced with fixed messages.
 
@@ -12,6 +12,7 @@ All challenge responses use `Cache-Control: no-store`. QR content is returned on
 
 - `POST /connections/telegram/login` with `{phone}`.
 - `POST /connections/whatsapp/connect` with `{}`.
+- `POST /connections/whatsapp/unlink` with `{}`; explicit sign-out/reset, independent of disconnect.
 - `GET /connections/flows/:id` returns `ConnectionFlow`.
 - `POST /connections/flows/:id/code` with `{code}`.
 - `POST /connections/flows/:id/password` with `{password}`.
@@ -39,3 +40,7 @@ Sidecar status reads have a three-second deadline; mutations have a ten-second d
 QR login and receiving-number verification are separate flows. The QR flow must reach its own terminal state before its lease is released and verification can start; an account-status response alone does not complete it. The server generates internal application references and exposes phone numbers for review. A random single-use code or an incoming call identifies one frozen candidate; the operator must explicitly confirm that number within the displayed window. Existing target identifiers and principal references survive replacement, and the old target stays committed until verified runtime installation succeeds. Self-account candidates are rejected.
 
 The [sidecar observer](whatsapp-target-pairing.md) never stores general message content or accepts a verification call. It uses the provider's canonical phone mapping, not a browser-supplied address. Pending flows are ephemeral; refresh/navigation does not restore their IDs. They expire automatically, and uncertain cancellation leaves calling blocked for recovery. Full handset QR/message/call acceptance still requires testing.
+
+## Unlink transaction
+
+Runtime admission stays held across disabling the WhatsApp configuration and the provider mutation. A configuration-install failure prevents logout; an unconfirmed provider result leaves the disabled revision committed and persists recovery pause. Shutdown drains this mutation before closing shared storage. The sidecar records per-session unlink recovery, distinguishes remote sign-out acknowledgement from local deletion, and rejects new pairing until cleanup is complete. It does not erase other accounts or VoxDock call records. Controlled status exposes pending cleanup even if the device ID is already absent.

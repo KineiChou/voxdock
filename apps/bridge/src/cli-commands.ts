@@ -30,6 +30,7 @@ const help = `VoxDock commands:
   settings
   configuration [--file PRIVATE_JSON]
   connection connect|disconnect --channel telegram|whatsapp [--input-file PRIVATE_JSON]
+  connection unlink --channel whatsapp
   connection status|code|password|cancel --flow ID [--input-file PRIVATE_JSON]
   connection setup --channel whatsapp
   connection target --channel telegram --input-file PRIVATE_JSON
@@ -212,9 +213,10 @@ export async function runCli(
     if (action === 'setup' || action === 'target') {
       if (values.flow || values.channel !== (action === 'setup' ? 'whatsapp' : 'telegram') || (action === 'setup' && values['input-file']) || (action === 'target' && !values['input-file'])) throw new CliError('invalid_arguments');
       output(await request(`/v1/console/connections/${values.channel}/${action}`, action === 'setup' ? {} : { method: 'POST', body, timeoutMs: 45000 }));
-    } else if (action === 'connect' || action === 'disconnect') {
+    } else if (action === 'connect' || action === 'disconnect' || action === 'unlink') {
       const channel = required(values, 'channel');
       if (!['telegram', 'whatsapp'].includes(channel) || values.flow) throw new CliError('invalid_arguments');
+      if (action === 'unlink' && (channel !== 'whatsapp' || values['input-file'])) throw new CliError('invalid_arguments');
       output(await request(`/v1/console/connections/${channel}/${action === 'connect' && channel === 'telegram' ? 'login' : action}`, { method: 'POST', body, timeoutMs: 45000 }));
     } else if (action && ['status', 'code', 'password', 'cancel'].includes(action)) {
       if (values.channel) throw new CliError('invalid_arguments');

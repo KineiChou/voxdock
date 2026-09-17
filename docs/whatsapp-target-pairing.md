@@ -53,11 +53,11 @@ receiving a verification event never authorizes target binding by itself.
 
 ## Build and validation
 
-Apply `media-websocket.patch`, `console-connections.patch`, then
-`target-pairing.patch` to WaCalls commit
+Apply `media-websocket.patch`, `console-connections.patch`,
+`target-pairing.patch`, then `account-unlink.patch` to WaCalls commit
 `edeb31f0427aba896639db503153b777a405eccf`. Docker and the source build script use
-this order. The script previously applied only the media patch; it now includes
-both connection and target verification APIs and hashes all three patches.
+this order. The script includes connection, target verification and account
+unlink APIs and hashes all four patches.
 
 Targeted synthetic Go tests cover filtering, expiry, own-account/LID rejection,
 first-candidate immutability, concurrent cancellation, unknown IDs, strict request

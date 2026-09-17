@@ -1,5 +1,7 @@
 export interface WhatsAppSetup {
   available: boolean;
+  linked: boolean;
+  unlink_pending: boolean;
   connected: boolean;
   account_phone: string | null;
   target: { phone: string; enabled: boolean } | null;
