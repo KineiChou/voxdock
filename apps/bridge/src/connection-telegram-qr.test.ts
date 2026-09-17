@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -112,4 +112,12 @@ it('does not invoke authorization or replace an existing Telegram session', asyn
   await writeFile(config.sessionFile, 'existing-private-session', { mode: 0o600 });
   await expect(service.startTelegramQr()).rejects.toThrow('telegram_already_connected');
   expect(authorize).not.toHaveBeenCalled(); expect(release).toHaveBeenCalledExactlyOnceWith(true);
+});
+
+it('removes account-bound peer credentials together with an explicitly disconnected session', async () => {
+  const { service, config, release } = await fixture(vi.fn());
+  for (const path of [config.sessionFile, `${config.sessionFile}.peers.json`]) await writeFile(path, 'synthetic-private-data', { mode: 0o600 });
+  expect(await service.disconnect('telegram')).toEqual({ disconnected: true });
+  for (const path of [config.sessionFile, `${config.sessionFile}.peers.json`]) await expect(access(path)).rejects.toMatchObject({ code: 'ENOENT' });
+  expect(release).toHaveBeenCalledExactlyOnceWith(true);
 });

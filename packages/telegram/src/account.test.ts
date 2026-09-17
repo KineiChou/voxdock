@@ -25,7 +25,7 @@ vi.mock('teleproto', () => ({
 vi.mock('teleproto/sessions/index.js', () => ({ StringSession: class {} }));
 vi.mock('teleproto/extensions/Logger.js', () => ({ LogLevel: { NONE: 'none' } }));
 import { Api } from 'teleproto';
-import { authorizeTelegram, authorizeTelegramQr, TelegramCleanupError } from './account.ts';
+import { authorizeTelegram, authorizeTelegramQr, connectTelegram, TelegramCleanupError } from './account.ts';
 
 let directory: string;
 const config = () => ({ apiId: 1, apiHash: 'test-only', sessionFile: join(directory, 'session') });
@@ -174,4 +174,13 @@ test('cleanup failure takes precedence over SDK authorization failure', async ()
   sdk.disconnect.mockRejectedValue(new Error('disconnect failed'));
   await expect(authorizeTelegramQr(config(), prompts())).rejects.toBeInstanceOf(TelegramCleanupError);
   expect(await readdir(directory)).toEqual([]);
+});
+
+test('failed existing-account connection retains cleanup uncertainty for the pairing lease', async () => {
+  await writeFile(config().sessionFile, 'existing-session');
+  sdk.connect.mockRejectedValue(new Error('connection failed'));
+  sdk.disconnect.mockRejectedValue(new Error('unconfirmed disconnect'));
+  await expect(connectTelegram(config())).rejects.toBeInstanceOf(TelegramCleanupError);
+  sdk.disconnect.mockResolvedValue(undefined);
+  await expect(connectTelegram(config())).rejects.toThrow('Telegram account connection failed');
 });

@@ -33,7 +33,7 @@ export function Connections() {
       ) : (
         query.data && (
           <>
-            <SimpleGrid cols={{ base: 1, lg: 2 }}>
+            <SimpleGrid cols={{ base: 1, lg: 2 }} style={{ alignItems: "start" }}>
               {query.data.channels.map((channel) => (
                 <Panel
                   key={channel.channel}

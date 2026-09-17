@@ -35,8 +35,7 @@ function identity(value: TelegramPairingIdentity): TelegramPairingIdentity {
   return { user_id: value.user_id, display_name: value.display_name, ...(value.username ? { username: value.username } : {}), ...(value.phone ? { phone: value.phone } : {}) };
 }
 async function observe(config: TelegramAccountConfig, input: Parameters<Observe>[1], signal?: AbortSignal) {
-  const name = '../../../packages/telegram/src/pairing.js';
-  const native = await import(name) as { observeTelegramPairing: Observe };
+  const native = await import('../../../packages/telegram/src/pairing.js');
   return native.observeTelegramPairing(config, input, signal);
 }
 

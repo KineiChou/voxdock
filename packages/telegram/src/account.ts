@@ -152,7 +152,7 @@ export async function connectTelegram(config: TelegramAccountConfig): Promise<Te
     hydrateTelegramPeers(client, config.sessionFile, account.id.toString());
     return client;
   } catch {
-    await client.disconnect();
+    await disconnect(client);
     throw new Error('Telegram account connection failed');
   }
 }
