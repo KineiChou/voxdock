@@ -47,7 +47,7 @@ export async function createWhatsAppDriver(options: WhatsAppOptions, callbacks: 
   const control = new WaCallsControl({ baseUrl: options.baseUrl, sessionId: options.sessionId, clientId, ownPhone, targetPhone, fetch: transport });
   const mediaFactory = options.media ?? connectWaCallsMedia;
   let closed = false; let failed = false; let reserving = false;
-  let active: { ref: string; media?: WaCallsMediaSession; connecting: boolean; localEnding: boolean; terminal: boolean; abort: AbortController } | undefined;
+  let active: { ref: string; media?: WaCallsMediaSession; connecting: boolean; mediaFailed: boolean; localEnding: boolean; terminal: boolean; abort: AbortController } | undefined;
   const offered = new Map<string, boolean>();
   const early: string[] = [];
   let lastChunk = Date.now();
@@ -62,19 +62,26 @@ export async function createWhatsAppDriver(options: WhatsAppOptions, callbacks: 
     callbacks.fault();
     if (active) callbacks.state(active.ref, 'uncertain');
   };
+  const failMedia = (call: NonNullable<typeof active>) => {
+    if (closed || failed || active !== call || call.localEnding || call.terminal || call.mediaFailed) return;
+    call.mediaFailed = true;
+    call.abort.abort(); call.media?.close();
+    // Media and signaling can close in either order; retain the terminal evidence stream.
+    callbacks.state(call.ref, 'uncertain');
+  };
   const startMedia = async () => {
     const call = active;
-    if (!call || call.connecting || call.localEnding || call.terminal || failed) return;
+    if (!call || call.connecting || call.mediaFailed || call.localEnding || call.terminal || failed) return;
     call.connecting = true;
     try {
       const media = await mediaFactory({ baseUrl: options.baseUrl, sessionId: options.sessionId, callId: call.ref, mediaSecret: options.mediaSecret,
         clientId, signal: call.abort.signal, fetch: transport,
-        onAudio: pcm => { if (active === call && !call.localEnding && !call.terminal) callbacks.audio(call.ref, pcm); },
-        onClosed: () => { if (!closed && active === call && !call.localEnding && !call.terminal) fault(); },
+        onAudio: pcm => { if (active === call && !call.mediaFailed && !call.localEnding && !call.terminal) callbacks.audio(call.ref, pcm); },
+        onClosed: () => failMedia(call),
       });
-      if (active !== call || call.localEnding || call.terminal || failed || closed) { media.close(); return; }
+      if (active !== call || call.mediaFailed || call.localEnding || call.terminal || failed || closed) { media.close(); return; }
       call.media = media; callbacks.audioReady(call.ref);
-    } catch { if (active === call && !call.localEnding && !call.terminal) fault(); }
+    } catch { failMedia(call); }
   };
   const event = (text: string) => {
     const value: unknown = JSON.parse(text);
@@ -115,7 +122,7 @@ export async function createWhatsAppDriver(options: WhatsAppOptions, callbacks: 
       const call = active; call.terminal = true; call.abort.abort(); call.media?.close();
       // Upstream local EndCall ignores its asynchronous signaling result.
       const explicitEvidence = value.termination === 'acknowledged' || value.termination === 'remote';
-      const uncertain = !explicitEvidence && (value.termination === 'unconfirmed' || call.localEnding || failed || ['failed', 'timeout', 'unknown'].includes(parsed.reason ?? 'unknown'));
+      const uncertain = !explicitEvidence && (value.termination === 'unconfirmed' || call.mediaFailed || call.localEnding || failed || ['failed', 'timeout', 'unknown'].includes(parsed.reason ?? 'unknown'));
       callbacks.state(call.ref, uncertain ? 'uncertain' : 'ended');
       if (!uncertain) active = undefined;
       return;
@@ -142,7 +149,7 @@ export async function createWhatsAppDriver(options: WhatsAppOptions, callbacks: 
       reserving = true;
       try {
         const ref = await deadline(control.dial(signal), 10000);
-        active = { ref, connecting: false, localEnding: false, terminal: false, abort: new AbortController() };
+        active = { ref, connecting: false, mediaFailed: false, localEnding: false, terminal: false, abort: new AbortController() };
         reserving = false;
         callbacks.state(ref, 'dialing'); for (const text of early.splice(0)) event(text);
         return ref;
@@ -152,7 +159,7 @@ export async function createWhatsAppDriver(options: WhatsAppOptions, callbacks: 
     async accept(ref, signal) {
       signal.throwIfAborted();
       if (offered.get(ref) !== true || active || reserving || failed || closed) throw new Error('WhatsApp incoming call is not admitted');
-      active = { ref, connecting: false, localEnding: false, terminal: false, abort: new AbortController() }; offered.delete(ref);
+      active = { ref, connecting: false, mediaFailed: false, localEnding: false, terminal: false, abort: new AbortController() }; offered.delete(ref);
       try { await action(ref, 'accept'); return ref; } catch { fault(); throw new Error('WhatsApp acceptance outcome unknown'); }
     },
     async reject(ref) { if (!offered.has(ref)) throw new Error('Unknown incoming offer'); await action(ref, 'reject'); offered.delete(ref); },
@@ -171,7 +178,7 @@ export async function createWhatsAppDriver(options: WhatsAppOptions, callbacks: 
         if (!call.terminal || active === call) callbacks.state(ref, 'uncertain');
       }
     },
-    async writeAudio(ref, pcm) { if (!active || active.ref !== ref || active.localEnding || active.terminal || !active.media || pcm.length !== 640) throw new Error('WhatsApp media unavailable'); active.media.writeAudio(pcm); },
+    async writeAudio(ref, pcm) { if (!active || active.ref !== ref || active.mediaFailed || active.localEnding || active.terminal || !active.media || pcm.length !== 640) throw new Error('WhatsApp media unavailable'); active.media.writeAudio(pcm); },
     async close() {
       if (closed) return;
       closed = true; clearInterval(heartbeat); streamAbort.abort();

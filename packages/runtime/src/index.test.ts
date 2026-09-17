@@ -15,7 +15,7 @@ const config = () => parseConfig({
   backend: { id: 'business', base_url: 'https://backend.invalid', request_token_file: 'backend.key', event_signing_key_file: 'signing.key' },
 });
 const facts: BackendContext = { context_revision: 50, obsolete: false, purpose: 'Review completed work', facts: ['Tests passed'], language: 'en' };
-function request(store: CallStore) { return store.createCall('client', 'one', { target_id: 'self', correlation_ref: 'task:one', context_ref: 'task:one', expires_at: new Date(Date.now() + 200000).toISOString() }, { enabled: true, allowedTargets: new Set(['self']), maxTtlSeconds: 300 }).call; }
+function request(store: CallStore, key = 'one') { return store.createCall('client', key, { target_id: 'self', correlation_ref: `task:${key}`, context_ref: `task:${key}`, expires_at: new Date(Date.now() + 200000).toISOString() }, { enabled: true, allowedTargets: new Set(['self']), maxTtlSeconds: 300 }).call; }
 async function fixture(options: { connect?: boolean; obsolete?: boolean; maxSeconds?: number; liveReady?: boolean } = {}) {
   const store = new CallStore(':memory:');
   let callbacks!: VoiceEvents;
@@ -118,6 +118,23 @@ test('obsolete preflight never dials, and worker failure retains uncertainty', a
     f.end.mockRejectedValueOnce(new Error('worker gone')); f.callbacks.fault(); await f.flush();
     expect(f.runtime.readyChannels.has('telegram')).toBe(false);
     expect(f.store.getCall(call.call_id).state).toBe('uncertain'); expect(f.liveStarts()).toBe(0);
+  } finally { await f.close(); }
+});
+
+test('late terminal evidence resolves a call-scoped media failure without disabling the channel', async () => {
+  const f = await fixture();
+  try {
+    const call = request(f.store); await f.runtime.onCallCreated(call); await f.flush();
+    f.end.mockRejectedValueOnce(new Error('upstream already removed the call'));
+    f.callbacks.state('provider', 'uncertain'); await f.flush();
+    expect(f.store.getCall(call.call_id).state).toBe('uncertain');
+    expect(f.runtime.readyChannels.has('telegram')).toBe(true);
+    expect(() => request(f.store, 'two')).toThrow('call_capacity');
+    f.callbacks.state('provider', 'ended');
+    expect(f.store.getCall(call.call_id).state).toBe('ended');
+    const next = request(f.store, 'two'); await f.runtime.onCallCreated(next); await f.flush();
+    expect(f.store.getCall(next.call_id).state).toBe('connected');
+    expect(f.liveStarts()).toBe(2);
   } finally { await f.close(); }
 });
 
