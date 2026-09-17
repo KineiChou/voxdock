@@ -21,6 +21,7 @@ beforeEach(() => {
 afterEach(() => rmSync(directory, { recursive: true, force: true }));
 
 it.each([
+  { args: ['connection', 'refresh', '--flow', flow], path: `/v1/console/connections/flows/${flow}/refresh`, method: 'POST', body: {} },
   { args: ['connection', 'setup', '--channel', 'whatsapp'], path: '/v1/console/connections/whatsapp/setup', method: 'GET', body: undefined },
   { args: ['connection', 'unlink', '--channel', 'whatsapp'], path: '/v1/console/connections/whatsapp/unlink', method: 'POST', body: {} },
   { args: ['connection', 'target', '--channel', 'telegram'], path: '/v1/console/connections/telegram/target', method: 'POST', body: target, input: true },
@@ -46,6 +47,10 @@ it.each([
 });
 
 it.each([
+  ['connection', 'refresh'],
+  ['connection', 'refresh', '--flow', flow, '--channel', 'whatsapp'],
+  ['connection', 'refresh', '--flow', flow, '--input-file', '/unused.json'],
+  ['connection', 'refresh', '--flow', '../unexpected'],
   ['connection', 'setup', '--channel', 'telegram'],
   ['connection', 'unlink', '--channel', 'telegram'],
   ['connection', 'target', '--channel', 'telegram'],

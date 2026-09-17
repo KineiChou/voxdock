@@ -18,6 +18,14 @@ export function endSession() {
   onUnauthorized();
 }
 const friendlyErrors: Record<string, string> = {
+  whatsapp_pairing_failed:
+    "WhatsApp could not link this account. Start pairing again.",
+  whatsapp_client_outdated:
+    "The WhatsApp service on your server needs an update before pairing can continue.",
+  whatsapp_pairing_interrupted:
+    "WhatsApp pairing was interrupted. Start pairing again.",
+  whatsapp_qr_expired:
+    "The WhatsApp QR code has expired. Start pairing again to get a new code.",
   whatsapp_unlink_unconfirmed:
     "Sign-out could not be confirmed. Calling is paused and your receiving number is disabled. Check the WhatsApp connection, then restart VoxDock before retrying.",
   whatsapp_unlink_unavailable:
