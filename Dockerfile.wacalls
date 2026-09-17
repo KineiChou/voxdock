@@ -9,6 +9,9 @@ RUN git init \
 COPY patches/wacalls/media-websocket.patch /tmp/media-websocket.patch
 RUN git apply --check /tmp/media-websocket.patch && git apply /tmp/media-websocket.patch
 
+COPY patches/wacalls/console-connections.patch /tmp/console-connections.patch
+RUN git apply --check /tmp/console-connections.patch && git apply /tmp/console-connections.patch
+
 FROM node:24.21.0-bookworm-slim AS client
 WORKDIR /client
 COPY --from=source /source/client/ ./
@@ -19,7 +22,7 @@ RUN go test ./cmd/server ./internal/voip/call \
  && CGO_ENABLED=0 go build -trimpath -o /out/wacalls-server ./cmd/server \
  && go list -m -json all > /out/dependencies.json \
  && git rev-parse HEAD > /out/source-revision.txt \
- && sha256sum /tmp/media-websocket.patch /out/wacalls-server > /out/checksums.txt
+ && sha256sum /tmp/media-websocket.patch /tmp/console-connections.patch /out/wacalls-server > /out/checksums.txt
 
 FROM debian:bookworm-slim
 RUN apt-get update \
