@@ -22,6 +22,8 @@ The flow has `id`, `channel`, `state`, `expires_at`, optional `qr`, and optional
 
 ## Validation and limits
 
+For a saved WhatsApp account, start WaCalls and wait for the configured session to be paired and open before starting the bridge. Container health alone does not establish account readiness. Runtime initialization checks once; a later platform reconnect does not automatically recreate the driver. Recover while paused and with no active or uncertain call by restarting the bridge after checking the account, or by saving and applying the reviewed configuration in Settings. Verify readiness before explicitly resuming.
+
 Fake Telegram callbacks cover code/2FA, exclusive lease ownership, cancellation, and stale submissions. Fake sidecar requests cover fixed routing, QR expiry, existing pairing reuse, and uncertain cleanup. Fastify injection covers strict request bodies and non-cacheable results. Controlled Go tests cover read-only status, preserved paired devices, and disconnect state. No real account or paid Live acceptance is claimed. Browser refresh does not restore a pending challenge identifier; it expires automatically.
 
 ## Cancellation and liveness correction
