@@ -33,7 +33,7 @@ const friendlyErrors: Record<string, string> = {
   target_pairing_not_found:
     "This pairing attempt is no longer available. Start again.",
   target_pairing_active:
-    "A receiving-number pairing attempt is already active. Cancel it or wait for it to expire.",
+    "A receiving-account pairing attempt is already active. Cancel it or wait for it to expire.",
   invalid_pairing_method: "Choose message or call pairing and try again.",
   telegram_account_required: "Link your Telegram calling account first.",
   telegram_pairing_unavailable:
@@ -42,9 +42,9 @@ const friendlyErrors: Record<string, string> = {
   target_pairing_cleanup_required:
     "Pairing could not be closed safely. Restart VoxDock before trying again.",
   target_pairing_unavailable:
-    "Receiving-number pairing is unavailable. Check the WhatsApp service on your server.",
+    "Receiving-account pairing is unavailable. Check the channel connection on your server.",
   target_pairing_changed:
-    "The detected account changed. Review the latest number before confirming.",
+    "The detected account changed. Review the latest account before confirming.",
   target_pairing_stale:
     "This pairing attempt has expired or changed. Start again.",
   target_must_differ:

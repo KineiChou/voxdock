@@ -15,10 +15,11 @@ export interface TelegramAccountConfig {
   sessionFile: string;
 }
 
-function createClient(config: TelegramAccountConfig, session: string): TelegramClient {
+function createClient(config: TelegramAccountConfig, session: string, purpose: 'authorization' | 'runtime'): TelegramClient {
   if (!Number.isSafeInteger(config.apiId) || config.apiId <= 0 || !config.apiHash) throw new Error('Telegram application credentials required');
   const client = new TelegramClient(new StringSession(session), config.apiId, config.apiHash, {
-    connectionRetries: 0, requestRetries: 0, autoReconnect: false,
+    // teleproto counts total attempts; provisioning may need one replay after DC migration.
+    connectionRetries: 1, requestRetries: purpose === 'authorization' ? 2 : 1, autoReconnect: false, floodSleepThreshold: 0,
   });
   client.setLogLevel(LogLevel.NONE);
   return client;
@@ -58,7 +59,7 @@ export async function authorizeTelegram(config: TelegramAccountConfig, prompts: 
   password: () => Promise<string>;
 }, signal?: AbortSignal): Promise<string> {
   signal?.throwIfAborted();
-  const client = createClient(config, '');
+  const client = createClient(config, '', 'authorization');
   const abort = () => { void client.disconnect().catch(() => {}); };
   signal?.addEventListener('abort', abort, { once: true });
   let accountId: string;
@@ -82,7 +83,7 @@ export async function authorizeTelegramQr(config: TelegramAccountConfig, prompts
   password: () => Promise<string>;
 }, signal?: AbortSignal): Promise<string> {
   signal?.throwIfAborted();
-  const client = createClient(config, '');
+  const client = createClient(config, '', 'authorization');
   const lifetime = new AbortController();
   const abort = () => lifetime.abort(signal?.reason);
   signal?.addEventListener('abort', abort, { once: true });
@@ -143,7 +144,7 @@ export async function authorizeTelegramQr(config: TelegramAccountConfig, prompts
 
 /** Connect an already-provisioned account; ordinary service startup never starts a login flow. */
 export async function connectTelegram(config: TelegramAccountConfig): Promise<TelegramClient> {
-  const client = createClient(config, await readFile(config.sessionFile, 'utf8'));
+  const client = createClient(config, await readFile(config.sessionFile, 'utf8'), 'runtime');
   try {
     await client.connect();
     if (!await client.checkAuthorization()) throw new Error('Telegram session is not authorized');
