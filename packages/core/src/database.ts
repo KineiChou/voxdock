@@ -1,8 +1,9 @@
+import { migrateConsoleFacts } from "./console-migration.js";
 import Database from "better-sqlite3";
 export function openDatabase(filename: string): Database.Database {
   const db = new Database(filename);
   const version = db.pragma("user_version", { simple: true }) as number;
-  if (version > 1) {
+  if (version > 2) {
     db.close();
     throw new Error("Unsupported database schema version");
   }
@@ -22,7 +23,8 @@ export function openDatabase(filename: string): Database.Database {
     CREATE TABLE IF NOT EXISTS usage (call_id TEXT PRIMARY KEY REFERENCES calls(id), day TEXT NOT NULL, zone TEXT NOT NULL, seconds REAL NOT NULL, status TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     INSERT OR IGNORE INTO metadata VALUES ('event_floor','0');
-    PRAGMA user_version = 1;
+
   `);
+  if (version < 2) migrateConsoleFacts(db);
   return db;
 }
