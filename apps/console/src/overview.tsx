@@ -10,6 +10,7 @@ import {
   Text,
   Title,
 } from "@mantine/core";
+import { useElementSize } from "@mantine/hooks";
 import { BarChart, DonutChart } from "@mantine/charts";
 import { IconArrowUpRight, IconPhone } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
@@ -28,11 +29,23 @@ import {
   seconds,
   Status,
 } from "./shared";
+const activityYAxisWidth = 60;
+const activityDateSpacing = 48;
+
 export function Overview() {
   const [days, setDays] = useState("7");
   const overview = useResource<ConsoleOverview>(`/overview?days=${days}`);
   const settings = useResource<Pick<ConsoleSettings, 'calling'>>("/control/status");
   const data = overview.data;
+  const { ref: chartRef, width: chartWidth } = useElementSize();
+  // Share a numeric interval so grid and labels use the same unshifted date centers.
+  const dateInterval = Math.max(
+    0,
+    Math.ceil(
+      ((data?.daily.length ?? 1) * activityDateSpacing) /
+        Math.max(chartWidth - activityYAxisWidth, activityDateSpacing),
+    ) - 1,
+  );
   return (
     <>
       <PageTitle
@@ -99,6 +112,7 @@ export function Overview() {
                 }
               >
                 <BarChart
+                  ref={chartRef}
                   h={260}
                   data={data.daily}
                   dataKey="date"
@@ -113,7 +127,12 @@ export function Overview() {
                   withLegend
                   tickLine="none"
                   gridAxis="y"
-                  yAxisProps={{ allowDecimals: false }}
+                  gridProps={{ syncWithTicks: true }}
+                  xAxisProps={{
+                    interval: dateInterval,
+                    tickFormatter: (date: string) => date.slice(5),
+                  }}
+                  yAxisProps={{ allowDecimals: false, width: activityYAxisWidth }}
                 />
               </Panel>
               <Panel title="By channel">
