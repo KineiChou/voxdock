@@ -43,6 +43,17 @@ export function ConnectionSettings({
                 <Stack>
                   <Switch
                     label="Enable channel"
+                    disabled={
+                      channel === "whatsapp" &&
+                      !form.baseline.deployment.whatsapp_available &&
+                      !s.whatsapp.enabled
+                    }
+                    description={
+                      channel === "whatsapp" &&
+                      !form.baseline.deployment.whatsapp_available
+                        ? "Set up the WhatsApp service on your server before enabling this channel."
+                        : undefined
+                    }
                     checked={s[channel].enabled}
                     onChange={(event) =>
                       update(channel, {
@@ -52,7 +63,7 @@ export function ConnectionSettings({
                     }
                   />
                   <TextInput
-                    label="Account reference"
+                    label="Account name"
                     value={s[channel].account_ref}
                     required
                     onChange={(event) =>
@@ -107,7 +118,7 @@ export function ConnectionSettings({
                         }
                       />
                       <TextInput
-                        label="Target account reference"
+                        label="Calling account"
                         value={target.account_ref}
                         required
                         onChange={(event) =>
@@ -115,7 +126,7 @@ export function ConnectionSettings({
                         }
                       />
                       <TextInput
-                        label="Contact reference"
+                        label="Contact name"
                         value={target.principal_ref}
                         required
                         onChange={(event) =>
@@ -127,8 +138,8 @@ export function ConnectionSettings({
                       <TextInput
                         label={
                           channel === "telegram"
-                            ? "Telegram peer ID"
-                            : "WhatsApp peer ID"
+                            ? "Telegram contact ID"
+                            : "WhatsApp contact ID"
                         }
                         value={target.peer_id}
                         required

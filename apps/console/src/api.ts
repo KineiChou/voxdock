@@ -19,22 +19,26 @@ export function endSession() {
 }
 const friendlyErrors: Record<string, string> = {
   remote_management_disabled:
-    "Remote management is disabled. Open the console locally on the server to enable access.",
+    "Remote management is disabled. Open Settings and Connections locally on the server. Calls and call history remain available.",
   revision_conflict:
     "Settings changed elsewhere. Reload saved settings, review your changes, and save again.",
   account_revision_conflict:
     "Account settings changed elsewhere. Refresh this page and try again.",
   active_or_uncertain_call:
-    "Wait until all calls have ended before applying settings.",
+    "A call is still active or its outcome is uncertain. Resolve it before changing settings or resuming calls.",
   management_busy:
     "Another configuration or connection change is in progress. Try again shortly.",
+  calling_disabled:
+    "Calling is turned off. Enable it in Settings before resuming.",
+  adapter_not_ready:
+    "Connect and enable a channel with an enabled call target before resuming calls.",
   invalid_configuration: "Check the settings and call targets, then try again.",
   credentials_required:
     "Add the required credentials before enabling this connection.",
   runtime_apply_failed:
     "Settings could not be applied. Calling remains paused. Review the configuration and try again.",
   invalid_current_password:
-    "The current password was not accepted. Sign in again and retry.",
+    "The current password was not accepted. Check it and try again.",
 };
 export class ApiError extends Error {
   constructor(

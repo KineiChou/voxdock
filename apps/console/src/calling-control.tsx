@@ -34,7 +34,11 @@ export function CallingControl({ settings }: { settings: ConsoleSettings }) {
               <IconPlayerPause size={16} />
             )
           }
-          disabled={settings.calling.paused ? !settings.calling.can_resume : !settings.calling.can_pause}
+          disabled={
+            settings.calling.paused
+              ? !settings.calling.can_resume
+              : !settings.calling.can_pause
+          }
           onClick={() => {
             setError(null);
             setAction(settings.calling.paused ? "resume" : "pause");
@@ -45,9 +49,14 @@ export function CallingControl({ settings }: { settings: ConsoleSettings }) {
       </Group>
       {settings.calling.paused && settings.calling.resume_blocked_reason && (
         <Text size="sm" c="dimmed">
-          {settings.calling.resume_blocked_reason === 'calling_disabled' ? 'Calling is turned off in your configuration.'
-            : settings.calling.resume_blocked_reason === 'active_or_uncertain_call' ? 'Finish or reconcile the current call before resuming.'
-              : 'A configured channel must be ready before calling can resume.'}
+          {settings.calling.resume_blocked_reason === "management_busy"
+            ? "A settings or connection change is in progress. Calling can resume when it finishes."
+            : settings.calling.resume_blocked_reason === "calling_disabled"
+              ? "Calling is turned off in your configuration."
+              : settings.calling.resume_blocked_reason ===
+                  "active_or_uncertain_call"
+                ? "Finish or reconcile the current call before resuming."
+                : "A configured channel must be ready before calling can resume."}
         </Text>
       )}
       <Modal

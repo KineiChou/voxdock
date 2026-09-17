@@ -1,7 +1,5 @@
 import { Group, SimpleGrid, Stack, Text } from "@mantine/core";
-import type {
-  ConsoleConnections,
-} from "../../../packages/contracts/src/console";
+import type { ConsoleConnections } from "../../../packages/contracts/src/console";
 import { useResource } from "./api";
 import {
   date,
@@ -47,12 +45,19 @@ export function Connections() {
                     rows={[
                       ["Account", channel.account_ref ?? "Not configured"],
                       ["Calling", channel.enabled ? "Enabled" : "Disabled"],
-                      ["Connection", channel.ready ? "Ready" : "Not ready"],
+                      [
+                        "Account connection",
+                        channel.authenticated ? "Connected" : "Disconnected",
+                      ],
+                      [
+                        "Calling readiness",
+                        channel.ready ? "Ready" : "Not ready",
+                      ],
                     ]}
                   />
                   <ConnectionLogin
                     channel={channel.channel}
-                    ready={channel.ready}
+                    authenticated={channel.authenticated}
                   />
                   <Text fw={600} size="sm" mt="xl" mb="sm">
                     Call targets

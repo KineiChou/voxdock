@@ -89,7 +89,7 @@ function AccountForm({ initial }: { initial: Account }) {
         />
         <Switch
           label="Allow remote management"
-          description="When off, manage VoxDock from the server itself. Calls continue normally."
+          description="When off, change settings and connections from the server itself. Calls and call history remain available."
           checked={account.allow_remote_management}
           onChange={(event) => {
             setAccount({
@@ -101,8 +101,8 @@ function AccountForm({ initial }: { initial: Account }) {
         />
         {!account.allow_remote_management && (
           <Alert color="orange">
-            Saving this setting will block console access from other devices.
-            You can re-enable it locally on the server.
+            Saving this setting will block Settings and Connections management
+            from other devices. You can re-enable it locally on the server.
           </Alert>
         )}
         <PasswordInput

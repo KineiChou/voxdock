@@ -34,10 +34,10 @@ const terminal = (flow: Flow) =>
   ["connected", "cancelled", "expired", "failed"].includes(flow.state);
 export function ConnectionLogin({
   channel,
-  ready,
+  authenticated,
 }: {
   channel: "telegram" | "whatsapp";
-  ready: boolean;
+  authenticated: boolean;
 }) {
   const [flow, setFlow] = useState<Flow | null>(null);
   const [phone, setPhone] = useState("");
@@ -198,7 +198,7 @@ export function ConnectionLogin({
             Cancel pairing
           </Button>
         </>
-      ) : ready || flow?.state === "connected" ? (
+      ) : authenticated || flow?.state === "connected" ? (
         <Button
           variant="light"
           color="red"
