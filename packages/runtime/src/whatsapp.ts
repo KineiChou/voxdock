@@ -102,7 +102,7 @@ export async function createWhatsAppDriver(options: WhatsAppOptions, callbacks: 
       if (offered.size >= 16) throw new Error('Too many incoming offers');
       let allowed = false;
       try {
-        const identity = /^[1-9][0-9]*@lid$/.test(value.peer) && typeof value.peer_phone_jid === 'string' ? value.peer_phone_jid : value.peer;
+        const identity = /^[1-9][0-9]*(?::[0-9]+)?@lid$/.test(value.peer) && typeof value.peer_phone_jid === 'string' ? value.peer_phone_jid : value.peer;
         allowed = whatsAppPhone(identity) === targetPhone;
       } catch { /* unresolved peers are not approved */ }
       offered.set(value.id, allowed); callbacks.incoming(value.id, allowed); return;

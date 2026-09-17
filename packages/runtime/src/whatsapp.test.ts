@@ -79,3 +79,22 @@ test('an upstream stored phone mapping can authorize an LID without guessing fro
     await f.flush(); expect(f.callbacks.incoming).toHaveBeenCalledWith('unmapped', false);
   } finally { await driver.close(); }
 });
+
+test('device-qualified incoming LIDs require a stored mapping to the allowed phone', async () => {
+  const f = fixture(); const driver = await createWhatsAppDriver(f.options, f.callbacks);
+  try {
+    for (const [id, peer, mapped] of [
+      ['unmapped-device', '777:4@lid', undefined],
+      ['foreign-device', '777:4@lid', '12025550102@s.whatsapp.net'],
+      ['malformed-device', '777:4:2@lid', f.options.peerId],
+      ['foreign-domain', '777:4@other', f.options.peerId],
+    ] as const) {
+      f.send({ type: 'incoming', sessionId: 'session', id, peer, ...(mapped ? { peer_phone_jid: mapped } : {}) });
+      await f.flush(); expect(f.callbacks.incoming).toHaveBeenLastCalledWith(id, false);
+      await expect(driver.accept(id, AbortSignal.timeout(1000))).rejects.toThrow('not admitted');
+    }
+    f.send({ type: 'incoming', sessionId: 'session', id: 'mapped-device', peer: '777:4@lid', peer_phone_jid: f.options.peerId });
+    await f.flush(); expect(f.callbacks.incoming).toHaveBeenLastCalledWith('mapped-device', true);
+    expect(await driver.accept('mapped-device', AbortSignal.timeout(1000))).toBe('mapped-device');
+  } finally { await driver.close(); }
+});
