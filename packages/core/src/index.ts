@@ -15,11 +15,13 @@ import {
   type Delegation,
   type DelegationResult,
   type TranscriptFragment,
+  type TranscriptAvailability,
 } from "@voxdock/contracts";
 import { openDatabase } from "./database.js";
 import { DomainError } from "./domain-error.js";
 export { DomainError } from "./domain-error.js";
 import { ConsoleQueries } from "./console.js";
+import { aggregateConversation } from "./conversation.js";
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (value && typeof value === "object")
@@ -86,6 +88,14 @@ export class CallStore {
     return new ConsoleQueries(this.db, this.now).transcripts(id, options);
   }
   setTranscriptCapture(enabled: boolean): void { this.persistTranscripts = enabled; }
+  consoleConversation(id: string) {
+    this.getCall(id);
+    const recording = this.db.prepare("SELECT availability FROM recording WHERE call_id=?").get(id) as { availability: TranscriptAvailability } | undefined;
+    const availability = recording?.availability ?? 'empty';
+    const fragments = (this.db.prepare("SELECT body FROM transcripts WHERE call_id=? ORDER BY rowid").all(id) as { body: string }[])
+      .map(row => JSON.parse(row.body) as TranscriptFragment);
+    return { turns: aggregateConversation(fragments), availability };
+  }
   private captureTranscripts(callId: string): boolean {
     const row = this.db
       .prepare("SELECT availability FROM recording WHERE call_id=?")
