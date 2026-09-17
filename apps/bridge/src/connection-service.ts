@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { access, chmod, mkdir, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { ConnectionFlow } from '@voxdock/contracts';
-import { authorizeTelegram, TelegramCleanupError, type TelegramAccountConfig } from '../../../packages/telegram/src/account.js';
+import { authorizeTelegram, authorizeTelegramQr, TelegramCleanupError, type TelegramAccountConfig } from '../../../packages/telegram/src/account.js';
 import { WhatsAppConnection, type WhatsAppConnectionConfig, type WhatsAppSession } from './connection-whatsapp.js';
 
 export class ConnectionError extends Error { constructor(message: string, readonly statusCode = 409) { super(message); } }
@@ -12,6 +12,7 @@ export interface ConnectionDependencies {
   getWhatsAppConfig(): Promise<WhatsAppConnectionConfig>;
   unlinkWhatsApp?(): Promise<{ unlinked: true }>;
   telegramAuthorize?: typeof authorizeTelegram;
+  telegramAuthorizeQr?: typeof authorizeTelegramQr;
   fetch?: typeof fetch;
   ttlMs?: number;
 }
@@ -70,8 +71,49 @@ export function createConnectionService(dependencies: ConnectionDependencies) {
     } finally { acquiring = false; }
   }
   function prompt(flow: Flow, state: 'code_required' | 'password_required'): Promise<string> {
-    flow.abort.signal.throwIfAborted(); flow.view.state = state;
+    flow.abort.signal.throwIfAborted(); clearQr(flow); flow.view.state = state;
     return new Promise((resolve, reject) => { flow.pending = { resolve, reject }; });
+  }
+  async function startTelegram(method: { phone: string } | { qr: true }): Promise<ConnectionFlow> {
+    const flow = await begin('telegram');
+    let config: TelegramAccountConfig;
+    try {
+      config = await dependencies.getTelegramConfig();
+      let exists = false; try { await access(config.sessionFile); exists = true; } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new ConnectionError('telegram_session_unavailable'); }
+      if (exists) throw new ConnectionError('telegram_already_connected');
+    } catch (error) { await finish(flow, 'failed', true); throw error; }
+    let scanning = 'qr' in method;
+    flow.work = (async () => {
+      try {
+        await mkdir(dirname(config.sessionFile), { recursive: true, mode: 0o700 });
+        await chmod(dirname(config.sessionFile), 0o700);
+        flow.abort.signal.throwIfAborted();
+        const password = () => { scanning = false; return prompt(flow, 'password_required'); };
+        if ('phone' in method) {
+          await (dependencies.telegramAuthorize ?? authorizeTelegram)(config, { phoneNumber: async () => method.phone, phoneCode: () => prompt(flow, 'code_required'), password }, flow.abort.signal);
+        } else {
+          await (dependencies.telegramAuthorizeQr ?? authorizeTelegramQr)(config, {
+            password,
+            async qrCode(challenge) {
+              // The SDK may complete an in-flight token refresh after scanning or cancellation.
+              if (!scanning || flow.abort.signal.aborted || terminal(flow)) return;
+              const expiry = Math.min(Date.parse(challenge.expires_at), Date.parse(flow.view.expires_at));
+              clearQr(flow);
+              if (!Number.isFinite(expiry) || expiry <= Date.now()) { flow.view.state = 'starting'; return; }
+              flow.view.state = 'qr_required'; flow.view.qr = challenge.qr;
+              flow.view.qr_expires_at = new Date(expiry).toISOString();
+            },
+          }, flow.abort.signal);
+        }
+        scanning = false;
+        if (!flow.abort.signal.aborted) await finish(flow, 'connected', true);
+      } catch (error) {
+        scanning = false;
+        flow.cleanupUnknown = error instanceof TelegramCleanupError;
+        if (!flow.abort.signal.aborted) { flow.view.error = flow.cleanupUnknown ? 'connection_cleanup_required' : 'telegram_sign_in_failed'; await finish(flow, 'failed', !flow.cleanupUnknown); }
+      }
+    })();
+    return { ...flow.view };
   }
   async function applyWhatsAppStatus(flow: Flow, result: WhatsAppSession): Promise<void> {
     if (flow.abort.signal.aborted || terminal(flow)) return;
@@ -112,26 +154,9 @@ export function createConnectionService(dependencies: ConnectionDependencies) {
     },
     async startTelegram(phone: string): Promise<ConnectionFlow> {
       if (!/^\+[1-9][0-9]{6,14}$/.test(phone)) throw new ConnectionError('invalid_phone_number', 400);
-      const flow = await begin('telegram');
-      let config: TelegramAccountConfig;
-      try {
-        config = await dependencies.getTelegramConfig();
-        let exists = false; try { await access(config.sessionFile); exists = true; } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new ConnectionError('telegram_session_unavailable'); }
-        if (exists) throw new ConnectionError('telegram_already_connected');
-      } catch (error) { await finish(flow, 'failed', true); throw error; }
-      flow.work = (async () => {
-        try {
-          await mkdir(dirname(config.sessionFile), { recursive: true, mode: 0o700 });
-          await chmod(dirname(config.sessionFile), 0o700);
-          await (dependencies.telegramAuthorize ?? authorizeTelegram)(config, { phoneNumber: async () => phone, phoneCode: () => prompt(flow, 'code_required'), password: () => prompt(flow, 'password_required') }, flow.abort.signal);
-          if (!flow.abort.signal.aborted) await finish(flow, 'connected', true);
-        } catch (error) {
-          flow.cleanupUnknown = error instanceof TelegramCleanupError;
-          if (!flow.abort.signal.aborted) { flow.view.error = 'telegram_sign_in_failed'; await finish(flow, 'failed', !flow.cleanupUnknown); }
-        }
-      })();
-      return { ...flow.view };
+      return startTelegram({ phone });
     },
+    startTelegramQr: () => startTelegram({ qr: true }),
     async startWhatsApp(): Promise<ConnectionFlow> {
       const flow = await begin('whatsapp');
       let wa: WhatsAppConnection;
@@ -174,7 +199,7 @@ export function createConnectionService(dependencies: ConnectionDependencies) {
       if (!value || value.length > (field === 'code' ? 16 : 256)) throw new ConnectionError('invalid_challenge_value', 400);
       const flow = get(id);
       if (Date.now() >= Date.parse(flow.view.expires_at) || flow.view.state !== `${field}_required` || !flow.pending || flow.abort.signal.aborted) throw new ConnectionError('connection_challenge_stale');
-      const pending = flow.pending; delete flow.pending; flow.view.state = 'starting'; pending.resolve(value);
+      const pending = flow.pending; delete flow.pending; clearQr(flow); flow.view.state = 'starting'; pending.resolve(value);
       return { ...flow.view };
     },
     cancel,
@@ -193,6 +218,7 @@ export function createConnectionService(dependencies: ConnectionDependencies) {
         release = await dependencies.acquire();
         if (channel === 'telegram') {
           const config = await dependencies.getTelegramConfig();
+          await unlink(`${config.sessionFile}.peers.json`).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; });
           await unlink(config.sessionFile).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; });
         } else await new WhatsAppConnection(await dependencies.getWhatsAppConfig(), dependencies.fetch).request('disconnect');
         await release(true); release = undefined;

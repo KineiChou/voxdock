@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { parseConfig } from '@voxdock/config';
 import { CallStore } from '@voxdock/core';
 import { createBridgeServer, type BridgeServerOptions } from './server.js';
+import { createConnectionService } from './connection-service.js';
 
 const token = 'control-test-token-with-at-least-32-characters';
 const password = 'console test password';
@@ -111,6 +112,24 @@ it('serves the same voice and language choices behind both authentication bounda
   for (const choices of [admin.json().voices, admin.json().languages]) {
     expect(new Set(choices.map((choice: { value: string }) => choice.value)).size).toBe(choices.length);
   }
+});
+it('protects Telegram QR start with authentication, CSRF and a strict empty body', async () => {
+  const connections = createConnectionService({ acquire: async () => async () => {},
+    getTelegramConfig: async () => { throw new Error('Not used'); }, getWhatsAppConfig: async () => { throw new Error('Not used'); } });
+  const start = vi.spyOn(connections, 'startTelegramQr').mockResolvedValue({ id: '38fcb054-6628-4e57-afb4-3f86240f8ccd', channel: 'telegram', state: 'starting', expires_at: new Date().toISOString() });
+  const { app, login } = await setup({ connections });
+  const url = '/admin/v1/connections/telegram/qr';
+  expect((await app.inject({ method: 'POST', url, headers: { origin }, payload: {} })).statusCode).toBe(401);
+  expect((await app.inject({ method: 'POST', url: '/v1/console/connections/telegram/qr', payload: {} })).statusCode).toBe(401);
+  const { cookie, csrf } = await login();
+  expect((await app.inject({ method: 'POST', url, headers: { cookie, origin }, payload: {} })).statusCode).toBe(403);
+  const headers = { cookie, origin, 'x-csrf-token': csrf };
+  expect((await app.inject({ method: 'POST', url, headers, payload: { api_hash: 'unexpected' } })).statusCode).toBe(400);
+  expect(start).not.toHaveBeenCalled();
+  const admin = await app.inject({ method: 'POST', url, headers, payload: {} });
+  const bearer = await app.inject({ method: 'POST', url: '/v1/console/connections/telegram/qr', headers: { authorization: `Bearer ${token}` }, payload: {} });
+  expect(admin.statusCode).toBe(200); expect(bearer.json()).toEqual(admin.json());
+  expect(admin.headers['cache-control']).toBe('no-store'); expect(start).toHaveBeenCalledTimes(2);
 });
 it('bounds simultaneous expensive password checks', async () => {
   const { app } = await setup();

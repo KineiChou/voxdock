@@ -23,6 +23,8 @@ afterEach(() => rmSync(directory, { recursive: true, force: true }));
 it.each([
   { args: ['connection', 'refresh', '--flow', flow], path: `/v1/console/connections/flows/${flow}/refresh`, method: 'POST', body: {} },
   { args: ['connection', 'setup', '--channel', 'whatsapp'], path: '/v1/console/connections/whatsapp/setup', method: 'GET', body: undefined },
+  { args: ['connection', 'setup', '--channel', 'telegram'], path: '/v1/console/connections/telegram/setup', method: 'GET', body: undefined },
+  { args: ['connection', 'connect', '--channel', 'telegram', '--method', 'qr'], path: '/v1/console/connections/telegram/qr', method: 'POST', body: {} },
   { args: ['connection', 'unlink', '--channel', 'whatsapp'], path: '/v1/console/connections/whatsapp/unlink', method: 'POST', body: {} },
   { args: ['connection', 'target', '--channel', 'telegram'], path: '/v1/console/connections/telegram/target', method: 'POST', body: target, input: true },
   { args: ['target-pair', 'start', '--method', 'message'], path: base, method: 'POST', body: { method: 'message' } },
@@ -30,6 +32,9 @@ it.each([
   { args: ['target-pair', 'status', '--flow', flow], path: `${base}/${flow}`, method: 'GET', body: undefined },
   { args: ['target-pair', 'confirm', '--flow', flow, '--candidate', candidate], path: `${base}/${flow}/confirm`, method: 'POST', body: { candidate_id: candidate } },
   { args: ['target-pair', 'cancel', '--flow', flow], path: `${base}/${flow}/cancel`, method: 'POST', body: {} },
+  { args: ['target-pair', 'start', '--channel', 'telegram', '--method', 'message'], path: base.replace('whatsapp', 'telegram'), method: 'POST', body: { method: 'message' } },
+  { args: ['target-pair', 'start', '--channel', 'telegram', '--method', 'call'], path: base.replace('whatsapp', 'telegram'), method: 'POST', body: { method: 'call' } },
+  { args: ['target-pair', 'confirm', '--channel', 'telegram', '--flow', flow, '--candidate', candidate], path: `${base.replace('whatsapp', 'telegram')}/${flow}/confirm`, method: 'POST', body: { candidate_id: candidate } },
 ])('maps $args to the authenticated $method $path request', async test => {
   const response = { accepted: true };
   const transport = vi.fn<typeof fetch>(async () => Response.json(response));
@@ -51,10 +56,15 @@ it.each([
   ['connection', 'refresh', '--flow', flow, '--channel', 'whatsapp'],
   ['connection', 'refresh', '--flow', flow, '--input-file', '/unused.json'],
   ['connection', 'refresh', '--flow', '../unexpected'],
-  ['connection', 'setup', '--channel', 'telegram'],
+  ['connection', 'connect', '--channel', 'telegram', '--method', 'qr', '--input-file', '/unused.json'],
+  ['connection', 'connect', '--channel', 'telegram', '--method', 'unknown'],
+  ['connection', 'connect', '--channel', 'whatsapp', '--method', 'qr'],
+  ['connection', 'disconnect', '--channel', 'telegram', '--method', 'qr'],
+  ['connection', 'status', '--flow', flow, '--method', 'qr'],
   ['connection', 'unlink', '--channel', 'telegram'],
   ['connection', 'target', '--channel', 'telegram'],
   ['target-pair', 'start', '--method', 'unknown'],
+  ['target-pair', 'start', '--channel', 'unknown', '--method', 'call'],
   ['target-pair', 'start', '--method', 'message', '--flow', flow],
   ['target-pair', 'confirm', '--flow', flow],
   ['target-pair', 'status', '--flow', flow, '--candidate', candidate],

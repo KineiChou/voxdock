@@ -30,14 +30,15 @@ const help = `VoxDock commands:
   settings [options]
   configuration [--file PRIVATE_JSON]
   connection connect|disconnect --channel telegram|whatsapp [--input-file PRIVATE_JSON]
+  connection connect --channel telegram --method qr
   connection unlink --channel whatsapp
   connection status|code|password|cancel --flow ID [--input-file PRIVATE_JSON]
   connection refresh --flow ID
-  connection setup --channel whatsapp
+  connection setup --channel telegram|whatsapp
   connection target --channel telegram --input-file PRIVATE_JSON
-  target-pair start --method message|call
-  target-pair status|cancel --flow ID
-  target-pair confirm --flow ID --candidate ID
+  target-pair start --channel telegram|whatsapp --method message|call
+  target-pair status|cancel --channel telegram|whatsapp --flow ID
+  target-pair confirm --channel telegram|whatsapp --flow ID --candidate ID
   console password --password-file PRIVATE_FILE --out NEW_HASH_FILE
   console recover --config FILE [--username NAME --password-file PRIVATE_FILE --allow-remote true|false]
   call --target ID --context-ref REF --correlation-ref REF --key KEY --expires-at UTC_ISO
@@ -115,8 +116,8 @@ export async function runCli(
     connections: ["config"],
     settings: ["config"],
     configuration: ["config", "file"],
-    connection: ["config", "channel", "flow", "input-file"],
-    'target-pair': ['config', 'method', 'flow', 'candidate'],
+    connection: ["config", "channel", "flow", "input-file", "method"],
+    'target-pair': ['config', 'channel', 'method', 'flow', 'candidate'],
     console: ["config", "username", "password-file", "out", "allow-remote"],
     call: [
       "config",
@@ -212,16 +213,19 @@ export async function runCli(
   }
   if (command === 'connection') {
     const action = positionals[1];
+    if (values.method && (action !== 'connect' || values.channel !== 'telegram' || !['qr', 'phone'].includes(values.method))) throw new CliError('invalid_arguments');
+    if (values.method === 'qr' && values['input-file']) throw new CliError('invalid_arguments');
     if (action === 'refresh' && (values.channel || values['input-file'])) throw new CliError('invalid_arguments');
     const body: unknown = values['input-file'] ? JSON.parse(readPrivateText(values['input-file'])) : {};
     if (action === 'setup' || action === 'target') {
-      if (values.flow || values.channel !== (action === 'setup' ? 'whatsapp' : 'telegram') || (action === 'setup' && values['input-file']) || (action === 'target' && !values['input-file'])) throw new CliError('invalid_arguments');
+      if (values.flow || !['whatsapp', 'telegram'].includes(values.channel ?? '') || (action === 'setup' && values['input-file']) || (action === 'target' && (values.channel !== 'telegram' || !values['input-file']))) throw new CliError('invalid_arguments');
       output(await request(`/v1/console/connections/${values.channel}/${action}`, action === 'setup' ? {} : { method: 'POST', body, timeoutMs: 45000 }));
     } else if (action === 'connect' || action === 'disconnect' || action === 'unlink') {
       const channel = required(values, 'channel');
       if (!['telegram', 'whatsapp'].includes(channel) || values.flow) throw new CliError('invalid_arguments');
       if (action === 'unlink' && (channel !== 'whatsapp' || values['input-file'])) throw new CliError('invalid_arguments');
-      output(await request(`/v1/console/connections/${channel}/${action === 'connect' && channel === 'telegram' ? 'login' : action}`, { method: 'POST', body, timeoutMs: 45000 }));
+      const endpoint = action === 'connect' && channel === 'telegram' ? values.method === 'qr' ? 'qr' : 'login' : action;
+      output(await request(`/v1/console/connections/${channel}/${endpoint}`, { method: 'POST', body, timeoutMs: 45000 }));
     } else if (action && ['status', 'code', 'password', 'cancel', 'refresh'].includes(action)) {
       if (values.channel) throw new CliError('invalid_arguments');
       const flow = ref(required(values, 'flow'));
@@ -231,7 +235,9 @@ export async function runCli(
   }
   if (command === 'target-pair') {
     const action = positionals[1];
-    const base = '/v1/console/connections/whatsapp/target-pairings';
+    const channel = values.channel ?? 'whatsapp';
+    if (!['telegram', 'whatsapp'].includes(channel)) throw new CliError('invalid_arguments');
+    const base = `/v1/console/connections/${channel}/target-pairings`;
     if (action === 'start') {
       if (!['message', 'call'].includes(values.method ?? '') || values.flow || values.candidate) throw new CliError('invalid_arguments');
       output(await request(base, { method: 'POST', body: { method: values.method }, timeoutMs: 45000 }));
