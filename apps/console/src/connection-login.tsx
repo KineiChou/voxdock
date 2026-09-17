@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Alert,
@@ -29,6 +29,7 @@ export type ConnectionFlow = {
   expires_at: string;
   error?: string;
   qr?: string;
+  qr_expires_at?: string;
 };
 export const connectionTerminal = (flow: ConnectionFlow) =>
   ["connected", "cancelled", "expired", "failed"].includes(flow.state);
@@ -49,9 +50,20 @@ export function ConnectionLogin({
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  const [qrImage, setQrImage] = useState<string | null>(null);
+  const [qrImage, setQrImage] = useState<{ qr: string; image: string } | null>(null);
+  const [now, setNow] = useState(Date.now);
+  const [generation, setGeneration] = useState(0);
+  const actionActive = useRef(false);
+  const queryGeneration = useRef(0);
+  const qrExpiresAt = flow?.qr_expires_at ?? flow?.expires_at;
+  const qrExpired = !!qrExpiresAt && Date.parse(qrExpiresAt) <= Math.max(now, Date.now());
+  useEffect(() => {
+    if (flow?.state !== "qr_required") return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [flow?.state]);
   const poll = useQuery({
-    queryKey: ["connection-flow", flow?.id],
+    queryKey: ["connection-flow", flow?.id, generation],
     queryFn: ({ signal }) =>
       api<ConnectionFlow>(
         `/connections/flows/${encodeURIComponent(flow!.id)}`,
@@ -60,12 +72,13 @@ export function ConnectionLogin({
           cache: "no-store",
         },
       ),
-    enabled: !!flow && !connectionTerminal(flow),
+    enabled: !!flow && !connectionTerminal(flow) && !busy,
+    gcTime: 0,
     refetchInterval: 2000,
     retry: false,
   });
   useEffect(() => {
-    if (poll.data) {
+    if (poll.data && poll.data.id === flow?.id && !actionActive.current) {
       setFlow(poll.data);
       if (connectionTerminal(poll.data))
         void queryClient.invalidateQueries({ queryKey: ["/connections"] });
@@ -78,10 +91,11 @@ export function ConnectionLogin({
   useEffect(() => {
     let active = true;
     setQrImage(null);
-    if (flow?.qr && flow.state === "qr_required")
-      void QRCode.toDataURL(flow.qr, { width: 260, margin: 2 })
+    const qr = flow?.qr;
+    if (qr && flow.state === "qr_required" && !qrExpired && !busy)
+      void QRCode.toDataURL(qr, { width: 260, margin: 2 })
         .then((image) => {
-          if (active) setQrImage(image);
+          if (active) setQrImage({ qr, image });
         })
         .catch(() => {
           if (active)
@@ -94,17 +108,35 @@ export function ConnectionLogin({
     return () => {
       active = false;
     };
-  }, [flow?.qr, flow?.state]);
+  }, [flow?.qr, flow?.state, qrExpired, busy]);
   async function act(path: string, body: object = {}) {
+    if (actionActive.current) return;
+    actionActive.current = true;
     setBusy(true);
     setError(null);
+    setQrImage(null);
+    // A new query generation isolates mutation results from earlier polling.
+    const nextGeneration = ++queryGeneration.current;
+    setGeneration(nextGeneration);
+    if (flow) setFlow({ ...flow, qr: undefined, qr_expires_at: undefined });
     try {
+      if (flow) {
+        const queryKey = ["connection-flow", flow.id];
+        await queryClient.cancelQueries({ queryKey });
+        queryClient.removeQueries({ queryKey });
+      }
       const result = await api<ConnectionFlow | undefined>(path, {
         method: "POST",
         body: JSON.stringify(body),
         cache: "no-store",
       });
+      if (result?.id)
+        queryClient.setQueryData(
+          ["connection-flow", result.id, nextGeneration],
+          result,
+        );
       setFlow(result?.id ? result : null);
+      setNow(Date.now());
       setCode("");
       setPassword("");
       await queryClient.invalidateQueries({ queryKey: ["/connections"] });
@@ -114,6 +146,7 @@ export function ConnectionLogin({
     } catch (error) {
       setError(error as Error);
     } finally {
+      actionActive.current = false;
       setBusy(false);
     }
   }
@@ -191,12 +224,17 @@ export function ConnectionLogin({
           {flow.state === "qr_required" && (
             <>
               <Text size="sm">
-                Open WhatsApp on your phone, go to Linked devices, and scan this
-                code.
+                Open WhatsApp using the account you want the server to use, go to
+                Linked devices, and scan this code.
               </Text>
-              {qrImage && (
+              {qrExpired && !busy && (
+                <Alert color="orange">
+                  This QR code has expired. Refresh it to continue pairing.
+                </Alert>
+              )}
+              {!busy && !qrExpired && qrImage?.qr === flow.qr && qrImage && (
                 <Image
-                  src={qrImage}
+                  src={qrImage.image}
                   alt="WhatsApp device pairing QR code"
                   w={260}
                   maw="100%"
@@ -207,6 +245,16 @@ export function ConnectionLogin({
               </Text>
             </>
           )}
+          {channel === "whatsapp" &&
+            ["starting", "qr_required"].includes(flow.state) && (
+              <Button
+                variant="light"
+                loading={busy}
+                onClick={() => void act(`/connections/flows/${flow.id}/refresh`)}
+              >
+                Refresh QR code
+              </Button>
+            )}
           <Button
             variant="default"
             disabled={busy}

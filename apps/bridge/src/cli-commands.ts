@@ -32,6 +32,7 @@ const help = `VoxDock commands:
   connection connect|disconnect --channel telegram|whatsapp [--input-file PRIVATE_JSON]
   connection unlink --channel whatsapp
   connection status|code|password|cancel --flow ID [--input-file PRIVATE_JSON]
+  connection refresh --flow ID
   connection setup --channel whatsapp
   connection target --channel telegram --input-file PRIVATE_JSON
   target-pair start --method message|call
@@ -209,6 +210,7 @@ export async function runCli(
   }
   if (command === 'connection') {
     const action = positionals[1];
+    if (action === 'refresh' && (values.channel || values['input-file'])) throw new CliError('invalid_arguments');
     const body: unknown = values['input-file'] ? JSON.parse(readPrivateText(values['input-file'])) : {};
     if (action === 'setup' || action === 'target') {
       if (values.flow || values.channel !== (action === 'setup' ? 'whatsapp' : 'telegram') || (action === 'setup' && values['input-file']) || (action === 'target' && !values['input-file'])) throw new CliError('invalid_arguments');
@@ -218,7 +220,7 @@ export async function runCli(
       if (!['telegram', 'whatsapp'].includes(channel) || values.flow) throw new CliError('invalid_arguments');
       if (action === 'unlink' && (channel !== 'whatsapp' || values['input-file'])) throw new CliError('invalid_arguments');
       output(await request(`/v1/console/connections/${channel}/${action === 'connect' && channel === 'telegram' ? 'login' : action}`, { method: 'POST', body, timeoutMs: 45000 }));
-    } else if (action && ['status', 'code', 'password', 'cancel'].includes(action)) {
+    } else if (action && ['status', 'code', 'password', 'cancel', 'refresh'].includes(action)) {
       if (values.channel) throw new CliError('invalid_arguments');
       const flow = ref(required(values, 'flow'));
       output(await request(`/v1/console/connections/flows/${encodeURIComponent(flow)}${action === 'status' ? '' : '/' + action}`, action === 'status' ? {} : { method: 'POST', body, timeoutMs: 45000 }));

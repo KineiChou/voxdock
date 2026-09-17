@@ -54,10 +54,10 @@ receiving a verification event never authorizes target binding by itself.
 ## Build and validation
 
 Apply `media-websocket.patch`, `console-connections.patch`,
-`target-pairing.patch`, then `account-unlink.patch` to WaCalls commit
+`target-pairing.patch`, `account-unlink.patch`, then `qr-refresh.patch` to WaCalls commit
 `edeb31f0427aba896639db503153b777a405eccf`. Docker and the source build script use
 this order. The script includes connection, target verification and account
-unlink APIs and hashes all four patches.
+unlink and QR refresh APIs and hashes all five patches.
 
 Targeted synthetic Go tests cover filtering, expiry, own-account/LID rejection,
 first-candidate immutability, concurrent cancellation, unknown IDs, strict request
@@ -105,3 +105,32 @@ observer/connection race tests passed. Full `go test -race ./cmd/server
 ./internal/voip/call` passed with local listener access enabled for synthetic
 media tests, resolving the earlier sandbox-only verification limitation. No
 account credentials, external platform calls or paid services were used.
+
+## QR lifecycle correction (2026-09-17)
+
+The connection patch ignored terminal QR errors and retained the last QR after
+its channel closed; reconnect then treated that cached state as active. The fifth
+patch handles terminal errors, rotates only unpaired client instances, and exposes
+`qr_expires_at` in UTC. An expired individual code is hidden while rotation remains
+`connecting`; exhausted QR channels report `qr_expired`. Pairing failures use
+`pairing_failed`, outdated clients use `client_outdated`; `error` contains only a
+stable category. This is a verified lifecycle defect, not a confirmed explanation
+of any particular phone-side network error.
+
+`POST /api/voxdock/sessions/{sid}/refresh` starts a new unpaired QR attempt and
+returns status. Existing completed credentials are preserved. A credential write
+already in progress returns `pairing` without QR and must be polled. Active calls
+and unlink recovery remain conflicts. A per-client admission gate runs before the
+pinned library's detached pairing worker writes credentials; retired generations
+cannot write or publish into the replacement session. Joining only the QR reader
+is insufficient. An identity remaining after a failed write produces
+`pairing_recovery_required` with `connection_cleanup_required` and is preserved for recovery. PairSuccess records
+credential completion; only authenticated connection readiness reports `open`.
+Failure logs contain stable categories, without protocol payloads or QR values.
+
+Validation: all five patches apply to the pinned source. The focused Go lifecycle,
+connection, unlink and session tests pass with the race detector. Tests cover late
+retired events, fresh device identity, concurrent admission versus retirement,
+paired-account preservation, cancellation, terminal QR removal and deadline
+filtering. The full `go test -race ./cmd/server` suite also passed with authorized
+local TCP/UDP access. Real account pairing remains a separate acceptance check.
