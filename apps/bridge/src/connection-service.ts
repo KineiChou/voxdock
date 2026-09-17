@@ -81,10 +81,13 @@ export function createConnectionService(dependencies: ConnectionDependencies) {
     },
     async startTelegram(phone: string): Promise<ConnectionFlow> {
       if (!/^\+[1-9][0-9]{6,14}$/.test(phone)) throw new ConnectionError('invalid_phone_number', 400);
-      const config = await dependencies.getTelegramConfig();
-      let exists = false; try { await access(config.sessionFile); exists = true; } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new ConnectionError('telegram_session_unavailable'); }
-      if (exists) throw new ConnectionError('telegram_already_connected');
       const flow = await begin('telegram');
+      let config: TelegramAccountConfig;
+      try {
+        config = await dependencies.getTelegramConfig();
+        let exists = false; try { await access(config.sessionFile); exists = true; } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new ConnectionError('telegram_session_unavailable'); }
+        if (exists) throw new ConnectionError('telegram_already_connected');
+      } catch (error) { await finish(flow, 'failed', true); throw error; }
       flow.work = (async () => {
         try {
           await mkdir(dirname(config.sessionFile), { recursive: true, mode: 0o700 });
@@ -99,9 +102,10 @@ export function createConnectionService(dependencies: ConnectionDependencies) {
       return { ...flow.view };
     },
     async startWhatsApp(): Promise<ConnectionFlow> {
-      const config = await dependencies.getWhatsAppConfig();
-      const wa = new WhatsAppConnection(config, dependencies.fetch);
       const flow = await begin('whatsapp');
+      let wa: WhatsAppConnection;
+      try { wa = new WhatsAppConnection(await dependencies.getWhatsAppConfig(), dependencies.fetch); }
+      catch (error) { await finish(flow, 'failed', true); throw error; }
       flow.wa = wa;
       flow.connecting = true;
       flow.work = (async () => {
