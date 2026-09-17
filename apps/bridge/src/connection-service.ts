@@ -14,7 +14,7 @@ export interface ConnectionDependencies {
   fetch?: typeof fetch;
   ttlMs?: number;
 }
-type Flow = { cleanupUnknown?: boolean; view: ConnectionFlow; abort: AbortController; release?: (safe: boolean) => Promise<void>; timer?: ReturnType<typeof setTimeout>; pending?: { resolve(value: string): void; reject(error: Error): void }; work?: Promise<void>; wa?: WhatsAppConnection; finishing?: Promise<void> };
+type Flow = { connecting?: boolean; canceling?: Promise<ConnectionFlow>; cleanupUnknown?: boolean; view: ConnectionFlow; abort: AbortController; release?: (safe: boolean) => Promise<void>; timer?: ReturnType<typeof setTimeout>; pending?: { resolve(value: string): void; reject(error: Error): void }; work?: Promise<void>; wa?: WhatsAppConnection; finishing?: Promise<void> };
 const terminal = (flow: Flow) => ['connected', 'cancelled', 'expired', 'failed'].includes(flow.view.state);
 
 export function createConnectionService(dependencies: ConnectionDependencies) {
@@ -22,7 +22,7 @@ export function createConnectionService(dependencies: ConnectionDependencies) {
   let acquiring = false;
   const ttl = Math.min(300000, Math.max(1000, dependencies.ttlMs ?? 180000));
   function get(id: string): Flow {
-    if (!current || current.view.id !== id) throw new ConnectionError('Connection challenge not found', 404);
+    if (!current || current.view.id !== id) throw new ConnectionError('connection_challenge_not_found', 404);
     return current;
   }
   async function finish(flow: Flow, state: ConnectionFlow['state'], safe: boolean): Promise<void> {
@@ -30,26 +30,34 @@ export function createConnectionService(dependencies: ConnectionDependencies) {
     flow.view.state = state; delete flow.view.qr; clearTimeout(flow.timer);
     flow.finishing = (async () => {
       const release = flow.release; delete flow.release;
-      try { await release?.(safe); } catch { flow.view.state = 'failed'; flow.view.error = 'Connection cleanup requires operator review'; }
+      try { await release?.(safe); } catch { flow.view.state = 'failed'; flow.view.error = 'connection_cleanup_required'; }
     })();
     await flow.finishing;
   }
   async function cancel(id: string, expired = false): Promise<ConnectionFlow> {
     const flow = get(id);
     if (terminal(flow)) return { ...flow.view };
-    flow.abort.abort(); flow.pending?.reject(new Error('Cancelled')); delete flow.pending;
+    if (flow.canceling) return flow.canceling;
+    flow.canceling = (async () => {
+    flow.abort.abort(); delete flow.view.qr; flow.pending?.reject(new Error('Cancelled')); delete flow.pending;
     let safe = true;
     try {
-      if (flow.wa) await flow.wa.request('disconnect');
+      if (flow.wa) {
+        await flow.work;
+        if (flow.cleanupUnknown) throw new Error('Connect outcome unknown');
+        await flow.wa.request('disconnect');
+      }
       else if (flow.work) await Promise.race([flow.work, new Promise<never>((_, reject) => { const timer = setTimeout(() => reject(new Error('Cleanup timeout')), 10000); timer.unref(); })]);
     } catch { safe = false; }
     safe = safe && !flow.cleanupUnknown;
-    if (!safe) flow.view.error = 'Connection cleanup requires operator review';
+    if (!safe) flow.view.error = 'connection_cleanup_required';
     await finish(flow, expired ? 'expired' : 'cancelled', safe);
     return { ...flow.view };
+    })();
+    return flow.canceling;
   }
   async function begin(channel: ConnectionFlow['channel']): Promise<Flow> {
-    if (acquiring || (current && !terminal(current))) throw new ConnectionError('Another connection operation is active');
+    if (acquiring || (current && !terminal(current))) throw new ConnectionError('connection_operation_active');
     acquiring = true;
     try {
       const release = await dependencies.acquire();
@@ -64,11 +72,18 @@ export function createConnectionService(dependencies: ConnectionDependencies) {
     return new Promise((resolve, reject) => { flow.pending = { resolve, reject }; });
   }
   return {
+    async accountStatus(): Promise<{ telegram: boolean; whatsapp: boolean }> {
+      const [telegram, whatsapp] = await Promise.all([
+        dependencies.getTelegramConfig().then(config => access(config.sessionFile).then(() => true)).catch(() => false),
+        dependencies.getWhatsAppConfig().then(config => new WhatsAppConnection(config, dependencies.fetch).request('status')).then(session => session.paired && session.state === 'open').catch(() => false),
+      ]);
+      return { telegram, whatsapp };
+    },
     async startTelegram(phone: string): Promise<ConnectionFlow> {
-      if (!/^\+[1-9][0-9]{6,14}$/.test(phone)) throw new ConnectionError('An international phone number is required', 400);
+      if (!/^\+[1-9][0-9]{6,14}$/.test(phone)) throw new ConnectionError('invalid_phone_number', 400);
       const config = await dependencies.getTelegramConfig();
-      let exists = false; try { await access(config.sessionFile); exists = true; } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new ConnectionError('Telegram session unavailable'); }
-      if (exists) throw new ConnectionError('Disconnect the current Telegram account before signing in');
+      let exists = false; try { await access(config.sessionFile); exists = true; } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new ConnectionError('telegram_session_unavailable'); }
+      if (exists) throw new ConnectionError('telegram_already_connected');
       const flow = await begin('telegram');
       flow.work = (async () => {
         try {
@@ -78,7 +93,7 @@ export function createConnectionService(dependencies: ConnectionDependencies) {
           if (!flow.abort.signal.aborted) await finish(flow, 'connected', true);
         } catch (error) {
           flow.cleanupUnknown = error instanceof TelegramCleanupError;
-          if (!flow.abort.signal.aborted) { flow.view.error = 'Telegram sign-in failed'; await finish(flow, 'failed', !flow.cleanupUnknown); }
+          if (!flow.abort.signal.aborted) { flow.view.error = 'telegram_sign_in_failed'; await finish(flow, 'failed', !flow.cleanupUnknown); }
         }
       })();
       return { ...flow.view };
@@ -88,37 +103,44 @@ export function createConnectionService(dependencies: ConnectionDependencies) {
       const wa = new WhatsAppConnection(config, dependencies.fetch);
       const flow = await begin('whatsapp');
       flow.wa = wa;
-      try {
-        const result = await flow.wa.request('connect');
-        if (flow.abort.signal.aborted || terminal(flow)) return { ...flow.view };
-        if (result.paired && result.state === 'open') await finish(flow, 'connected', true);
-        else if (result.qr) { flow.view.state = 'qr_required'; flow.view.qr = result.qr; }
-      } catch { flow.view.error = 'WhatsApp connection requires operator review'; await finish(flow, 'failed', false); }
+      flow.connecting = true;
+      flow.work = (async () => {
+        try {
+          const result = await wa.request('connect');
+          if (flow.abort.signal.aborted || terminal(flow)) return;
+          if (result.paired && result.state === 'open') await finish(flow, 'connected', true);
+          else if (result.qr) { flow.view.state = 'qr_required'; flow.view.qr = result.qr; }
+        } catch {
+          flow.cleanupUnknown = true;
+          flow.view.error = 'connection_cleanup_required';
+          if (!flow.abort.signal.aborted) await finish(flow, 'failed', false);
+        } finally { flow.connecting = false; }
+      })();
       return { ...flow.view };
     },
     async flow(id: string): Promise<ConnectionFlow> {
       const flow = get(id);
-      if (!terminal(flow) && flow.wa) {
+      if (!terminal(flow) && !flow.connecting && flow.wa) {
         try {
           const result = await flow.wa.request('status');
           if (flow.abort.signal.aborted || terminal(flow)) return { ...flow.view };
           if (result.paired && result.state === 'open') await finish(flow, 'connected', true);
           else if (result.qr) { flow.view.state = 'qr_required'; flow.view.qr = result.qr; }
           else { flow.view.state = 'starting'; delete flow.view.qr; }
-        } catch { flow.view.error = 'WhatsApp status unavailable'; }
+        } catch { flow.view.error = 'whatsapp_status_unavailable'; }
       }
       return { ...flow.view };
     },
     async submit(id: string, field: 'code' | 'password', value: string): Promise<ConnectionFlow> {
-      if (!value || value.length > (field === 'code' ? 16 : 256)) throw new ConnectionError('Invalid challenge value', 400);
+      if (!value || value.length > (field === 'code' ? 16 : 256)) throw new ConnectionError('invalid_challenge_value', 400);
       const flow = get(id);
-      if (Date.now() >= Date.parse(flow.view.expires_at) || flow.view.state !== `${field}_required` || !flow.pending || flow.abort.signal.aborted) throw new ConnectionError('Connection challenge is no longer awaiting this value');
+      if (Date.now() >= Date.parse(flow.view.expires_at) || flow.view.state !== `${field}_required` || !flow.pending || flow.abort.signal.aborted) throw new ConnectionError('connection_challenge_stale');
       const pending = flow.pending; delete flow.pending; flow.view.state = 'starting'; pending.resolve(value);
       return { ...flow.view };
     },
     cancel,
     async disconnect(channel: ConnectionFlow['channel']): Promise<{ disconnected: true }> {
-      if (acquiring || (current && !terminal(current))) throw new ConnectionError('Cancel the current connection operation first');
+      if (acquiring || (current && !terminal(current))) throw new ConnectionError('connection_operation_active');
       acquiring = true;
       let release: ((safe: boolean) => Promise<void>) | undefined;
       try {
@@ -129,10 +151,15 @@ export function createConnectionService(dependencies: ConnectionDependencies) {
         } else await new WhatsAppConnection(await dependencies.getWhatsAppConfig(), dependencies.fetch).request('disconnect');
         await release(true); release = undefined;
         return { disconnected: true };
-      } catch { await release?.(false); throw new ConnectionError('Disconnect could not be confirmed'); }
+      } catch { await release?.(false); throw new ConnectionError('connection_disconnect_unconfirmed'); }
       finally { acquiring = false; }
     },
-    async close(): Promise<void> { if (current && !terminal(current)) await cancel(current.view.id); },
+    async close(): Promise<void> {
+      const flow = current;
+      if (flow && !terminal(flow)) await cancel(flow.view.id);
+      await flow?.canceling;
+      await flow?.finishing;
+    },
   };
 }
 export type ConnectionService = ReturnType<typeof createConnectionService>;

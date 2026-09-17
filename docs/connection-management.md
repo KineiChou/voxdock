@@ -23,3 +23,9 @@ The flow has `id`, `channel`, `state`, `expires_at`, optional `qr`, and optional
 ## Validation and limits
 
 Fake Telegram callbacks cover code/2FA, exclusive lease ownership, cancellation, and stale submissions. Fake sidecar requests cover fixed routing, QR expiry, existing pairing reuse, and uncertain cleanup. Fastify injection covers strict request bodies and non-cacheable results. Controlled Go tests cover read-only status, preserved paired devices, and disconnect state. No real account or paid Live acceptance is claimed. Browser refresh does not restore a pending challenge identifier; it expires automatically.
+
+## Cancellation and liveness correction
+
+A connect request can finish after cancellation is requested. Cancellation now drains its pending connect request before disconnecting. A timed-out or failed mutation has an unknown outcome, so the lifecycle lease is released as unsafe and calling remains blocked. Shutdown also waits for a terminal flow's pending lifecycle release. These cases have deterministic fake-transport regression tests.
+
+Sidecar status reads have a three-second deadline; mutations have a ten-second deadline. All sidecar responses are limited to 64 KiB. Account-status reads are nonmutating and unknown status is reported disconnected. WhatsApp open status requires a currently connected and logged-in socket. Disconnect cancels and joins the QR worker before publishing the final disconnected state, preventing a late QR from reappearing. API errors use fixed codes suitable for frontend translation.

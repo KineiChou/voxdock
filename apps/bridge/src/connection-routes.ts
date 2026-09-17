@@ -7,7 +7,7 @@ const challenge = Type.Object({ id: Type.String({ format: 'uuid' }) }, strict);
 export function registerConnectionRoutes(app: FastifyInstance, prefix: string, service: ConnectionService): void {
   const invoke = async (reply: import('fastify').FastifyReply, action: () => Promise<unknown>) => {
     reply.header('cache-control', 'no-store');
-    try { return await action(); } catch (error) { return reply.code(error instanceof ConnectionError ? error.statusCode : 409).send({ error: error instanceof ConnectionError ? error.message : 'Connection operation unavailable' }); }
+    try { return await action(); } catch (error) { return reply.code(error instanceof ConnectionError ? error.statusCode : 409).send({ error: error instanceof ConnectionError ? error.message : 'connection_operation_unavailable' }); }
   };
   app.post<{ Body: { phone: string } }>(`${prefix}/connections/telegram/login`, { schema: { body: Type.Object({ phone: Type.String({ pattern: '^\\+[1-9][0-9]{6,14}$' }) }, strict) } }, (request, reply) => invoke(reply, () => service.startTelegram(request.body.phone)));
   app.post(`${prefix}/connections/whatsapp/connect`, { schema: { body: empty } }, (_, reply) => invoke(reply, () => service.startWhatsApp()));
