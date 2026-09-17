@@ -14,19 +14,42 @@ export function configureSession(
   session = value;
   onUnauthorized = callback;
 }
+export function endSession() {
+  onUnauthorized();
+}
+const friendlyErrors: Record<string, string> = {
+  remote_management_disabled:
+    "Remote management is disabled. Open the console locally on the server to enable access.",
+  revision_conflict:
+    "Settings changed elsewhere. Reload saved settings, review your changes, and save again.",
+  account_revision_conflict:
+    "Account settings changed elsewhere. Refresh this page and try again.",
+  active_or_uncertain_call:
+    "Wait until all calls have ended before applying settings.",
+  management_busy:
+    "Another configuration or connection change is in progress. Try again shortly.",
+  invalid_configuration: "Check the settings and call targets, then try again.",
+  credentials_required:
+    "Add the required credentials before enabling this connection.",
+  runtime_apply_failed:
+    "Settings could not be applied. Calling remains paused. Review the configuration and try again.",
+  invalid_current_password:
+    "The current password was not accepted. Sign in again and retry.",
+};
 export class ApiError extends Error {
   constructor(
     public status: number,
-    code?: string,
+    public code?: string,
   ) {
     super(
-      code === "usage_timezone_conflict"
-        ? "Usage records use a different timezone. Restore the matching timezone in your deployment configuration to view this report."
-        : status === 401
-          ? "Your session has ended. Please sign in again."
-          : status === 409
-            ? "This action is not available in the current state. Refresh and try again."
-            : "We couldn’t complete this request. Please try again.",
+      friendlyErrors[code ?? ""] ??
+        (code === "usage_timezone_conflict"
+          ? "Usage records use a different timezone. Restore the matching timezone in your deployment configuration to view this report."
+          : status === 401
+            ? "Your session has ended. Please sign in again."
+            : status === 409
+              ? "This action is not available in the current state. Refresh and try again."
+              : "We couldn’t complete this request. Please try again."),
     );
   }
 }
@@ -35,7 +58,9 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
     ...options,
     credentials: "same-origin",
     headers: {
-      ...(options?.body !== undefined ? { "Content-Type": "application/json" } : {}),
+      ...(options?.body !== undefined
+        ? { "Content-Type": "application/json" }
+        : {}),
       ...(session && options?.method && options.method !== "GET"
         ? { "X-CSRF-Token": session.csrf_token }
         : {}),
