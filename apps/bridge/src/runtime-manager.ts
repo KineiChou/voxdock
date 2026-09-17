@@ -7,6 +7,7 @@ import type { ConfigurationStore } from './configuration-store.js';
 /** Serializes every configuration/pairing change with call admission. */
 export class RuntimeManager {
   private busy = false;
+  private resumeAdmission: (() => void) | undefined;
   private runtime: Runtime | undefined;
   private closing = false;
   private starting: Promise<void> | undefined;
@@ -28,7 +29,19 @@ export class RuntimeManager {
     if (this.busy) throw new DomainError('management_busy', 409);
     if (this.store.listCalls().some(call => call.state !== 'ended')) throw new DomainError('active_or_uncertain_call', 409);
     this.busy = true;
-    this.store.setPaused(true);
+    this.resumeAdmission = this.store.suspendAdmission();
+  }
+  private finish(cleanupUnknown = false): void {
+    this.busy = cleanupUnknown;
+    if (cleanupUnknown) { this.store.setPaused(true); return; }
+    this.resumeAdmission?.();
+    this.resumeAdmission = undefined;
+  }
+  private async restore(): Promise<void> {
+    let cleanupUnknown = false;
+    try { await this.start(); }
+    catch (error) { cleanupUnknown = this.runtime !== undefined; throw error; }
+    finally { this.finish(cleanupUnknown); }
   }
   apply(input: ConsoleConfigurationUpdate) {
     if (this.busy) return Promise.reject(new DomainError('management_busy', 409));
@@ -47,7 +60,7 @@ export class RuntimeManager {
   }
   private async stop(): Promise<void> {
     try { await this.runtime?.close(); }
-    catch { throw new DomainError('runtime_stop_failed', 503); }
+    catch { this.finish(true); throw new DomainError('runtime_stop_failed', 503); }
     this.runtime = undefined;
   }
   /** The caller owns the lease and has already stopped the previous runtime. */
@@ -70,7 +83,7 @@ export class RuntimeManager {
       if (!this.closing) { try { await this.start(); } catch { cleanupUnknown = this.runtime !== undefined; } }
       if (this.closing) throw new DomainError('service_closing', 503);
       throw new DomainError('runtime_apply_failed', 503);
-    } finally { this.busy = cleanupUnknown; }
+    } finally { this.finish(cleanupUnknown); }
   }
   acquire(): Promise<(safe: boolean, update?: ConsoleConfigurationUpdate) => Promise<void>> {
     if (this.busy) return Promise.reject(new DomainError('management_busy', 409));
@@ -93,19 +106,18 @@ export class RuntimeManager {
     };
   }
   private async releaseLease(safe: boolean, update?: ConsoleConfigurationUpdate): Promise<void> {
-    if (!safe) return;
     if (this.closing) throw new DomainError('service_closing', 503);
+    if (!safe) { this.finish(true); return; }
     if (update) {
       let prepared: ReturnType<ConfigurationStore['prepare']>;
       try { prepared = this.configuration.prepare(update); }
       catch (error) {
-        try { await this.start(); } catch { /* Preserve the configuration validation error. */ }
-        finally { this.busy = false; }
+        try { await this.restore(); } catch { /* Preserve the configuration validation error. */ }
         throw error;
       }
       await this.install(prepared);
     } else {
-      try { await this.start(); } finally { this.busy = false; }
+      await this.restore();
     }
   }
   onCallCreated: Runtime['onCallCreated'] = async call => { if (!this.runtime || this.busy) throw new DomainError('management_busy', 409); await this.runtime.onCallCreated(call); };
@@ -115,6 +127,6 @@ export class RuntimeManager {
     this.closing = true;
     await this.operation?.catch(() => {});
     await this.starting?.catch(() => {});
-    await this.runtime?.close(); this.runtime = undefined;
+    await this.stop();
   }
 }

@@ -345,3 +345,29 @@ it("does not speak a late result for an earlier user context", () => {
   expect(store.recordResult({ ...result, result_id: "current-context", context_revision: 2, revision: 2 }).playback_status).toBe("eligible");
   expect(() => store.recordResult({ ...result, result_id: "future-context", context_revision: 3, revision: 3 })).toThrow("unknown_context_revision");
 });
+
+describe("temporary admission holds", () => {
+  it("releases independent holds idempotently without overriding maintenance", () => {
+    const first = store.suspendAdmission();
+    const second = store.suspendAdmission();
+    expect(store.isPaused(false)).toBe(true);
+    store.setPaused(false);
+    first(); first();
+    expect(store.isPaused(false)).toBe(true);
+    second();
+    expect(store.isPaused(false)).toBe(false);
+    const maintenanceHold = store.suspendAdmission();
+    store.setPaused(true);
+    maintenanceHold();
+    expect(store.isPaused(false)).toBe(true);
+  });
+  it("does not persist temporary holds across restart but retains maintenance", () => {
+    store.suspendAdmission();
+    store.close(); store = new CallStore(filename);
+    expect(store.isPaused(false)).toBe(false);
+    expect(store.isPaused(true)).toBe(true);
+    store.setPaused(true);
+    store.close(); store = new CallStore(filename);
+    expect(store.isPaused(false)).toBe(true);
+  });
+});
