@@ -4,8 +4,10 @@ import { randomUUID } from 'node:crypto';
 import { TelegramClient, Api } from 'teleproto';
 import { LogLevel } from 'teleproto/extensions/Logger.js';
 import { StringSession } from 'teleproto/sessions/index.js';
+import { hydrateTelegramPeers } from './peers.ts';
 
-export class TelegramCleanupError extends Error { constructor() { super('Telegram disconnect could not be confirmed'); } }
+import { TelegramCleanupError } from './errors.ts';
+export { TelegramCleanupError } from './errors.ts';
 
 export interface TelegramAccountConfig {
   apiId: number;
@@ -147,6 +149,7 @@ export async function connectTelegram(config: TelegramAccountConfig): Promise<Te
     if (!await client.checkAuthorization()) throw new Error('Telegram session is not authorized');
     const account = await client.getMe();
     if (!(account instanceof Api.User) || account.bot) throw new Error('A Telegram user account is required');
+    hydrateTelegramPeers(client, config.sessionFile, account.id.toString());
     return client;
   } catch {
     await client.disconnect();
