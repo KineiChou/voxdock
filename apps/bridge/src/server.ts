@@ -1,5 +1,8 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import Fastify from 'fastify';
+import Fastify, { type FastifyReply } from 'fastify';
+import { registerConsole, type ConsoleOptions } from './console-auth.js';
+import { registerConsoleRoutes } from './console-routes.js';
+import { createConsoleService } from './console-service.js';
 import swagger from '@fastify/swagger';
 import { Type } from '@sinclair/typebox';
 import {
@@ -11,6 +14,7 @@ import { CallStore, DomainError } from '@voxdock/core';
 
 export interface BridgeServerOptions {
   config: BridgeConfig;
+  console?: ConsoleOptions;
   store: CallStore;
   controlToken: string;
   mode?: 'native' | 'simulation';
@@ -38,6 +42,13 @@ export async function createBridgeServer(options: BridgeServerOptions) {
   await app.register(swagger, { openapi: { info: { title: 'VoxDock control API', version: '1.0.0' } } });
   app.addHook('onRequest', async (request, reply) => {
     if (request.routeOptions.url === '/healthz') return;
+    const route = request.routeOptions.url ?? '';
+    if (route.startsWith('/admin/v1/') || route.startsWith('/v1/console/')) {
+      reply.header('cache-control', 'no-store');
+      reply.header('x-content-type-options', 'nosniff');
+      reply.header('content-security-policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
+    }
+    if (options.console && (route.startsWith('/admin/v1/') || route.startsWith('/console') || route === '/')) return;
     const authorization = request.headers.authorization ?? '';
     if (!timingSafeEqual(tokenDigest(authorization), expected)) {
       return reply.code(401).send({ error: 'unauthorized' });
@@ -46,7 +57,8 @@ export async function createBridgeServer(options: BridgeServerOptions) {
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof DomainError) return reply.code(error.statusCode).send({ error: error.code });
     if (typeof error === 'object' && error !== null) {
-      if ('validation' in error && error.validation) return reply.code(400).send({ error: 'invalid_request' });
+      if (('validation' in error && error.validation) || ('statusCode' in error && error.statusCode === 400)) return reply.code(400).send({ error: 'invalid_request' });
+      if ('statusCode' in error && error.statusCode === 429) return reply.code(429).send({ error: 'rate_limited' });
       if ('statusCode' in error && error.statusCode === 413) return reply.code(413).send({ error: 'body_too_large' });
     }
     return reply.code(500).send({ error: 'internal_error' });
@@ -88,6 +100,7 @@ export async function createBridgeServer(options: BridgeServerOptions) {
     const result = store.createCall('operator', key, request.body, {
       enabled: config.calling.enabled && !store.isPaused(false) && !!target && ready.has(target.channel) && !!options.onCallCreated,
       allowedTargets: new Set(activeTargets.map(t => t.id)), maxTtlSeconds: config.calling.max_request_ttl_seconds,
+      ...(target ? { channel: target.channel } : {}),
     });
     if (!result.replayed && options.onCallCreated) {
       const start = options.onCallCreated;
@@ -98,16 +111,21 @@ export async function createBridgeServer(options: BridgeServerOptions) {
   app.get<{ Params: { call_id: string } }>('/v1/calls/:call_id', {
     schema: { params: idParams, response: { 200: CallStatusSchema } },
   }, async request => getCall(request.params.call_id));
-  app.post<{ Params: { call_id: string } }>('/v1/calls/:call_id/end', { schema: { params: idParams } }, async (request, reply) => {
-    const call = getCall(request.params.call_id);
+  const endCall = (id: string, reply: FastifyReply) => {
+    const call = getCall(id);
     if (call.state === 'ended' || call.state === 'ending') return call;
     if (call.state === 'requested') return store.transition(call.call_id, 'ended', { reason: 'cancelled_before_dial' });
     if (!options.onEnd) return reply.code(409).send({ error: 'reconciliation_required' });
     const ending = store.transition(call.call_id, 'ending');
     setImmediate(() => { if (closing) return; void options.onEnd!(ending).catch(() => failDispatch(call.call_id)); });
     return reply.code(202).send(ending);
-  });
-  app.post('/v1/control/pause', async () => { store.setPaused(true); return { paused: true }; });
+  };
+  app.post<{ Params: { call_id: string } }>('/v1/calls/:call_id/end', { schema: { params: idParams } }, async (request, reply) => endCall(request.params.call_id, reply));
+  const consoleService = createConsoleService(options);
+  app.post('/v1/control/pause', async () => consoleService.pause());
+  app.post('/v1/control/resume', async () => consoleService.resume());
+  registerConsoleRoutes(app, '/v1/console', options, endCall);
+  if (options.console) await registerConsole(app, options.console, admin => registerConsoleRoutes(admin, '', options, endCall));
   app.get<{ Querystring: { after?: string; limit?: string } }>('/v1/events', async (request, reply) => {
     const { after = '0', limit = '100' } = request.query;
     if (!/^\d+$/.test(after) || !/^\d+$/.test(limit) || !Number.isSafeInteger(Number(after)) || Number(limit) < 1 || Number(limit) > 500) {
