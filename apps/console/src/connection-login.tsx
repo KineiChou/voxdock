@@ -6,6 +6,7 @@ import {
   Group,
   Image,
   PasswordInput,
+  SegmentedControl,
   Stack,
   Text,
   TextInput,
@@ -38,13 +39,16 @@ export function ConnectionLogin({
   authenticated,
   onFlowChange,
   onBusyChange,
+  disabled = false,
 }: {
   channel: "telegram" | "whatsapp";
   authenticated: boolean;
+  disabled?: boolean;
   onFlowChange?: (flow: ConnectionFlow | null) => void;
   onBusyChange?: (busy: boolean) => void;
 }) {
   const [flow, setFlow] = useState<ConnectionFlow | null>(null);
+  const [method, setMethod] = useState("qr");
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
@@ -224,18 +228,25 @@ export function ConnectionLogin({
           {flow.state === "qr_required" && (
             <>
               <Text size="sm">
-                Open WhatsApp using the account you want the server to use, go to
-                Linked devices, and scan this code.
+                {channel === "telegram"
+                  ? "Open Telegram on the phone with your calling account. Go to Settings → Devices → Link Desktop Device, then scan this code."
+                  : "Open WhatsApp using the account you want the server to use, go to Linked devices, and scan this code."}
               </Text>
               {qrExpired && !busy && (
                 <Alert color="orange">
-                  This QR code has expired. Refresh it to continue pairing.
+                  {channel === "telegram"
+                    ? "This QR code has expired. Waiting for a new code…"
+                    : "This QR code has expired. Refresh it to continue pairing."}
                 </Alert>
               )}
               {!busy && !qrExpired && qrImage?.qr === flow.qr && qrImage && (
                 <Image
                   src={qrImage.image}
-                  alt="WhatsApp device pairing QR code"
+                  alt={
+                    channel === "telegram"
+                      ? "Telegram login QR code"
+                      : "WhatsApp device pairing QR code"
+                  }
                   w={260}
                   maw="100%"
                 />
@@ -268,34 +279,58 @@ export function ConnectionLogin({
           variant="light"
           color="red"
           loading={busy}
+          disabled={disabled}
           onClick={() => void act(`/connections/${channel}/disconnect`)}
         >
           Disconnect account
         </Button>
       ) : channel === "telegram" ? (
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            void act("/connections/telegram/login", { phone });
-          }}
-        >
-          <Stack gap="sm">
-            <TextInput
-              label="Phone number"
-              description="Include the country code, for example +81."
-              type="tel"
-              autoComplete="tel"
-              value={phone}
-              onChange={(event) => setPhone(event.currentTarget.value)}
-              required
-            />
-            <Group>
-              <Button type="submit" loading={busy}>
-                Connect Telegram
-              </Button>
-            </Group>
-          </Stack>
-        </form>
+        <Stack gap="sm">
+          <SegmentedControl
+            aria-label="Telegram login method"
+            value={method}
+            onChange={setMethod}
+            disabled={disabled || busy}
+            data={[
+              { value: "qr", label: "QR code" },
+              { value: "phone", label: "Phone number" },
+            ]}
+          />
+          {method === "qr" ? (
+            <Button
+              disabled={disabled}
+              loading={busy}
+              onClick={() => void act("/connections/telegram/qr")}
+            >
+              Get Telegram QR code
+            </Button>
+          ) : (
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (!disabled) void act("/connections/telegram/login", { phone });
+              }}
+            >
+              <Stack gap="sm">
+                <TextInput
+                  label="Phone number"
+                  description="Include the country code, for example +81."
+                  type="tel"
+                  autoComplete="tel"
+                  value={phone}
+                  disabled={disabled || busy}
+                  onChange={(event) => setPhone(event.currentTarget.value)}
+                  required
+                />
+                <Group>
+                  <Button type="submit" disabled={disabled} loading={busy}>
+                    Connect Telegram
+                  </Button>
+                </Group>
+              </Stack>
+            </form>
+          )}
+        </Stack>
       ) : (
         <Button
           loading={busy}

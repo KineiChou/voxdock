@@ -12,8 +12,7 @@ import {
   Status,
 } from "./shared";
 import type { ConsoleConfigurationView } from "../../../packages/contracts/src/console-configuration";
-import { ConnectionSettings } from "./connection-settings";
-import { ConnectionLogin } from "./connection-login";
+import { TelegramSetup } from "./telegram-setup";
 import { WhatsAppSetup } from "./whatsapp-setup";
 export function Connections() {
   const configuration = useResource<ConsoleConfigurationView>(
@@ -57,21 +56,10 @@ export function Connections() {
                   {channel.channel === "whatsapp" ? (
                     <WhatsAppSetup />
                   ) : (
-                    <>
-                      <ConnectionLogin
-                        channel="telegram"
-                        authenticated={channel.authenticated}
-                      />
-                      <Text size="sm" mt="lg">
-                        Receiving account:{" "}
-                        {configuration.data?.settings.targets.find(
-                          (target) => target.channel === "telegram",
-                        )?.peer_id ?? "Not configured"}
-                      </Text>
-                      {configuration.data && (
-                        <ConnectionSettings initial={configuration.data} />
-                      )}
-                    </>
+                    <TelegramSetup
+                      configuration={configuration.data}
+                      authenticated={channel.authenticated}
+                    />
                   )}
                 </Panel>
               ))}
