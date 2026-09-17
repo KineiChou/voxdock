@@ -16,7 +16,7 @@ const config = () => parseConfig({
 });
 const facts: BackendContext = { context_revision: 50, obsolete: false, purpose: 'Review completed work', facts: ['Tests passed'], language: 'en' };
 function request(store: CallStore, key = 'one') { return store.createCall('client', key, { target_id: 'self', correlation_ref: `task:${key}`, context_ref: `task:${key}`, expires_at: new Date(Date.now() + 200000).toISOString() }, { enabled: true, allowedTargets: new Set(['self']), maxTtlSeconds: 300 }).call; }
-async function fixture(options: { connect?: boolean; obsolete?: boolean; maxSeconds?: number; liveReady?: boolean } = {}) {
+async function fixture(options: { connect?: boolean; obsolete?: boolean; maxSeconds?: number; liveReady?: boolean; language?: string } = {}) {
   const store = new CallStore(':memory:');
   let callbacks!: VoiceEvents;
   let emit!: (event: LiveEvent) => void;
@@ -32,6 +32,7 @@ async function fixture(options: { connect?: boolean; obsolete?: boolean; maxSeco
   const dial = vi.fn(async () => { if (options.connect !== false) { callbacks.state('provider', 'connected'); callbacks.audioReady('provider'); } return 'provider'; });
   const settings = config();
   settings.calling.max_call_seconds = options.maxSeconds ?? 2;
+  settings.live.language = options.language ?? settings.live.language;
   const instruction = vi.fn((text: string) => { output.push({ kind: 'instructions', text }); return 'append'; });
   const runtime = await createRuntime({ config: settings, store }, {
     backend: { context, delegate, deliverEvent }, environment: () => '123', resampler: () => new PassThrough(),
@@ -84,6 +85,13 @@ test('runtime delivers durable call events and acknowledges the outbox', async (
     expect(f.deliverEvent).toHaveBeenCalled();
     expect(f.store.pendingEvents()).toHaveLength(0);
   } finally { await f.close(); vi.useRealTimers(); }
+});
+test('applies the configured spoken language to opening context', async () => {
+  const f = await fixture({ language: 'zh-CN' });
+  try {
+    await f.runtime.onCallCreated(request(f.store)); await f.flush();
+    expect(f.output.filter(item => item.kind === 'thinking').map(item => item.text).join('')).toContain('"language":"zh-CN"');
+  } finally { await f.close(); }
 });
 test('a pause during asynchronous preflight prevents the platform side effect', async () => {
   const f = await fixture();

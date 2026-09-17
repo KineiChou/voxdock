@@ -15,6 +15,8 @@ A persistent administrator account adds username/password login, credential rota
 
 Telegram exposes phone, code and two-step verification challenges. WhatsApp exposes a QR flow through the controlled-session WaCalls patch; this requires rebuilding the sidecar image. Flow expiry, cancel and disconnect run on the backend; pairing does not create test calls. QR rendering uses the pinned MIT-licensed node-qrcode package. Stored secret values are never returned to the browser.
 
+The configured preferred language previously had no effect because the opening always used the business context language. The opening now supplies the saved Live language; a coordinator regression checks a preference different from the backend context. Voice/model execution and paid-provider acceptance remain distinct from saving a valid configuration.
+
 Integration passed TypeScript, production build, 166 unit/integration tests, and the real CLI/service smoke. Browser checks verify username login, saved settings after reload, and responsive navigation using synthetic records. Review additionally reproduced cancellation releasing a WhatsApp lease before its connect request completed and shutdown ignoring an unfinished release; connection work is now drained and unknown cleanup holds admission closed. Runtime driver cleanup failures propagate instead of allowing overlapping runtimes. Real account pairing and phone calls remain separate acceptance gates. Relevant code is in `apps/console/src`, `apps/bridge/src/{console-account,console-network,configuration-store,runtime-manager,connection-service}.ts` and `packages/core/src/conversation.ts`; the integration PR provides release traceability.
 
 ## Operator console, 2026-09-17

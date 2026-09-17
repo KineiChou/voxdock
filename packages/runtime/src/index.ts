@@ -109,7 +109,7 @@ export async function createRuntime(options: { config: BridgeConfig; store: Call
       if (!current(a) || a.stopping || store.getCall(a.callId).state !== 'connected') return;
       a.context = context;
       if (context.obsolete) { a.live.instructions('Identify yourself as an AI assistant and say the notification is no longer current. Do not report old task details.'); a.greeted = true; return; }
-      const facts = JSON.stringify({ purpose: context.purpose, facts: context.facts, language: context.language });
+      const facts = JSON.stringify({ purpose: context.purpose, facts: context.facts, language: config.live.language });
       if (Buffer.byteLength(facts) > 8000) throw new Error('Context exceeds bounded spoken briefing');
       for (const part of chunks(facts)) a.live.thinking(`Business context data: ${part}`);
       a.live.instructions('Immediately greet without waiting for the caller. Introduce yourself as an AI assistant in the language supplied with the context, briefly explain the purpose and verified facts, then pause and listen.');
