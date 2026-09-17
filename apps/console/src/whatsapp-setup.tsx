@@ -86,7 +86,7 @@ export function WhatsAppSetup() {
   }
   async function unlink() {
     if (
-      !setup.data?.linked || busy || connectionBusy || activePairing(pairing) ||
+      !(setup.data?.linked || setup.data?.unlink_pending) || busy || connectionBusy || activePairing(pairing) ||
       (connection && !connectionTerminal(connection))
     ) return;
     setBusy(true);
@@ -115,6 +115,7 @@ export function WhatsAppSetup() {
       queryClient.setQueryData<Setup>([setupPath], (previous) => previous && ({
         ...previous,
         linked: false,
+        unlink_pending: false,
         connected: false,
         account_phone: null,
         target: previous.target ? { ...previous.target, enabled: false } : null,
@@ -178,7 +179,7 @@ export function WhatsAppSetup() {
   }
   const current = setup.data;
   const linking =
-    !current?.connected || !!(connection && connection.state !== "connected");
+    current?.unlink_pending || !current?.connected || !!(connection && connection.state !== "connected");
   return (
     <Stack mt="lg" gap="sm">
       {setup.error && (
@@ -190,7 +191,7 @@ export function WhatsAppSetup() {
             ["Calling account", current.account_phone ?? "Not linked"],
             [
               "Connection",
-              current.connected ? "Connected" : current.linked ? "Offline · account linked" : "Not linked",
+              current.unlink_pending ? "Needs attention · unlink incomplete" : current.connected ? "Connected" : current.linked ? "Offline · account linked" : "Not linked",
             ],
             [
               current.target && !current.target.enabled
@@ -237,10 +238,11 @@ export function WhatsAppSetup() {
                 <Stepper.Step label="Link account" />
                 <Stepper.Step label="Pair your number" />
               </Stepper>
-              {current.linked && (
+              {(current.linked || current.unlink_pending) && (
                 <WhatsAppAccount
                   phone={current.account_phone}
                   connected={current.connected}
+                  unlinkPending={current.unlink_pending}
                   disabled={busy || connectionBusy || activePairing(pairing) ||
                     !!(connection && !connectionTerminal(connection))}
                   confirming={confirmUnlink}
@@ -249,13 +251,20 @@ export function WhatsAppSetup() {
                   onUnlink={() => void unlink()}
                 />
               )}
-              {unlinked && !current.linked && (
+              {unlinked && !current.linked && !current.unlink_pending && (
                 <Alert color="teal">
                   Account unlinked. Scan a new QR code, then verify the number
                   where you want to receive calls. Your call history is saved.
                 </Alert>
               )}
-              {!confirmUnlink && (linking ? (
+              {current.unlink_pending && (
+                <Alert color="orange" title="Account unlinking is incomplete">
+                  Restart VoxDock, then choose Finish unlinking. WhatsApp calling
+                  and receiving-number setup remain unavailable until sign-out
+                  is complete. Your call history is saved.
+                </Alert>
+              )}
+              {!confirmUnlink && !current.unlink_pending && (linking ? (
                 <>
                   <Text>
                     {current.linked
