@@ -312,10 +312,11 @@ export async function createRuntime(options: { config: BridgeConfig; store: Call
       closing = true;
       clearInterval(outboxTimer); outboxAbort.abort();
       if (active) await stop(active, 'shutdown', true);
-      await Promise.allSettled([...routes.values()].map(route => deadline(route.voice.close(), 5000)));
+      const cleanup = await Promise.allSettled([...routes.values()].map(route => deadline(route.voice.close(), 5000)));
       await Promise.allSettled([...finalizing].flatMap(a => a.finalized ? [a.finalized] : []));
       if (outboxFlight) await deadline(outboxFlight, 1000).catch(() => {});
       readyChannels.clear(); disposed = true;
+      if (cleanup.some(result => result.status === 'rejected')) throw new Error('platform_cleanup_unknown');
     },
   };
 }

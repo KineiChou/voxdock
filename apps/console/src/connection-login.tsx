@@ -11,7 +11,7 @@ import {
   TextInput,
 } from "@mantine/core";
 import QRCode from "qrcode";
-import { api, queryClient } from "./api";
+import { api, ApiError, queryClient } from "./api";
 import { Failure, Status } from "./shared";
 
 type Flow = {
@@ -111,11 +111,7 @@ export function ConnectionLogin({
         <Failure error={poll.error} retry={() => void poll.refetch()} />
       )}
       {flow && <Status value={flow.state} />}
-      {flow?.state === "failed" && (
-        <Alert color="red">
-          Connection failed. Check your account details and try again.
-        </Alert>
-      )}
+      {flow?.error && <Failure error={new ApiError(409, flow.error)} />}
       {flow?.state === "expired" && (
         <Alert color="orange">
           Pairing expired. Start again to get a new code.

@@ -4,7 +4,7 @@ import { IconPlayerPause, IconPlayerPlay } from "@tabler/icons-react";
 import type { ConsoleSettings } from "../../../packages/contracts/src/console";
 import { api, queryClient } from "./api";
 import { Failure, Status } from "./shared";
-export function CallingControl({ settings }: { settings: ConsoleSettings }) {
+export function CallingControl({ settings }: { settings: Pick<ConsoleSettings, 'calling'> }) {
   const [action, setAction] = useState<"pause" | "resume" | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);

@@ -3,6 +3,9 @@ import Fastify, { type FastifyReply } from 'fastify';
 import { registerConsole, type ConsoleOptions } from './console-auth.js';
 import { registerConsoleRoutes } from './console-routes.js';
 import { createConsoleService } from './console-service.js';
+import { enforceConsoleManagementAccess } from './console-network.js';
+import type { RuntimeManager } from './runtime-manager.js';
+import type { ConnectionService } from './connection-service.js';
 import swagger from '@fastify/swagger';
 import { Type } from '@sinclair/typebox';
 import {
@@ -19,6 +22,8 @@ export interface BridgeServerOptions {
   controlToken: string;
   mode?: 'native' | 'simulation';
   readyChannels?: ReadonlySet<Channel>;
+  management?: RuntimeManager;
+  connections?: ConnectionService;
   onCallCreated?: (call: CallStatus) => Promise<void>;
   onEnd?: (call: CallStatus) => Promise<void>;
   onResult?: (result: DelegationResult) => Promise<void>;
@@ -32,8 +37,8 @@ export async function createBridgeServer(options: BridgeServerOptions) {
     throw new Error('A control token of at least 32 non-whitespace characters is required');
   }
   const { config, store } = options;
-  const ready = options.readyChannels ?? new Set<Channel>();
-  const activeTargets = config.targets.filter(t => t.enabled && config.channels[t.channel].enabled);
+  const ready = { has: (channel: Channel) => options.readyChannels?.has(channel) ?? false };
+  const activeTargets = () => config.targets.filter(t => t.enabled && config.channels[t.channel].enabled);
   const app = Fastify({ logger: false, bodyLimit: 64 * 1024,
     ajv: { customOptions: { removeAdditional: false, coerceTypes: false } } });
   let closing = false;
@@ -41,6 +46,10 @@ export async function createBridgeServer(options: BridgeServerOptions) {
   const expected = tokenDigest(`Bearer ${options.controlToken}`);
   await app.register(swagger, { openapi: { info: { title: 'VoxDock control API', version: '1.0.0' } } });
   app.addHook('onRequest', async (request, reply) => {
+    if (options.console?.account) {
+      const denied = enforceConsoleManagementAccess(request, reply, options.console.account, options.console.trustedProxyAddresses);
+      if (denied) return denied;
+    }
     if (request.routeOptions.url === '/healthz') return;
     const route = request.routeOptions.url ?? '';
     if (route.startsWith('/admin/v1/') || route.startsWith('/v1/console/')) {
@@ -85,7 +94,7 @@ export async function createBridgeServer(options: BridgeServerOptions) {
       reason: ready.has(channel) ? null : 'adapter_not_ready',
     }])),
   }));
-  app.get('/v1/targets', async () => activeTargets.map(t => ({
+  app.get('/v1/targets', async () => activeTargets().map(t => ({
     id: t.id, channel: t.channel, account_ref: t.account_ref, principal_ref: t.principal_ref, enabled: t.enabled,
   })));
   app.get('/v1/calls', async () => ({ calls: store.listCalls() }));
@@ -96,10 +105,10 @@ export async function createBridgeServer(options: BridgeServerOptions) {
     if (typeof key !== 'string' || !/^[\x21-\x7e]{1,200}$/.test(key)) {
       return reply.code(400).send({ error: 'idempotency_key_required' });
     }
-    const target = activeTargets.find(t => t.id === request.body.target_id);
+    const target = activeTargets().find(t => t.id === request.body.target_id);
     const result = store.createCall('operator', key, request.body, {
       enabled: config.calling.enabled && !store.isPaused(false) && !!target && ready.has(target.channel) && !!options.onCallCreated,
-      allowedTargets: new Set(activeTargets.map(t => t.id)), maxTtlSeconds: config.calling.max_request_ttl_seconds,
+      allowedTargets: new Set(activeTargets().map(t => t.id)), maxTtlSeconds: config.calling.max_request_ttl_seconds,
       ...(target ? { channel: target.channel } : {}),
     });
     if (!result.replayed && options.onCallCreated) {

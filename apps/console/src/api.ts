@@ -18,6 +18,17 @@ export function endSession() {
   onUnauthorized();
 }
 const friendlyErrors: Record<string, string> = {
+  connection_cleanup_required: 'The connection could not be closed safely. Restart VoxDock before trying again.',
+  connection_operation_active: 'Finish or cancel the current connection attempt first.',
+  telegram_credentials_required: 'Save your Telegram API ID and API hash before connecting.',
+  whatsapp_service_required: 'Configure the WhatsApp service before connecting.',
+  telegram_already_connected: 'Disconnect the current Telegram account before signing in again.',
+  telegram_sign_in_failed: 'Telegram sign-in failed. Check your account details and try again.',
+  connection_challenge_stale: 'This verification step has expired or already been used. Start again.',
+  connection_operation_unavailable: 'This connection operation is unavailable. Check the saved settings and current call status.',
+  connection_disconnect_unconfirmed: 'The account could not be disconnected safely. Check its status before trying again.',
+  whatsapp_status_unavailable: 'WhatsApp status is temporarily unavailable.',
+  runtime_stop_failed: 'Calling is paused because the previous connection did not close safely. Restart VoxDock before trying again.',
   remote_management_disabled:
     "Remote management is disabled. Open Settings and Connections locally on the server. Calls and call history remain available.",
   revision_conflict:

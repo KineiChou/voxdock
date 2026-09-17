@@ -10,7 +10,7 @@ export function aggregateConversation(fragments: readonly TranscriptFragment[]):
     const current = turns.at(-1);
     const contiguous = previous && current && !previous.final &&
       fragment.session_id === previous.session_id && fragment.speaker === previous.speaker &&
-      fragment.seq === previous.seq + 1 && fragment.context_revision === previous.context_revision &&
+      fragment.seq === previous.seq + 1 &&
       fragment.start_ms >= previous.start_ms && fragment.end_ms >= previous.end_ms &&
       fragment.start_ms - previous.end_ms <= 1500;
     if (contiguous) {

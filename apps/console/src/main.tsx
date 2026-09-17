@@ -334,6 +334,7 @@ function Shell({ onLogout }: { onLogout: () => Promise<void> }) {
           <Button
             variant="subtle"
             color="gray"
+            c="gray.2"
             fullWidth
             justify="flex-start"
             leftSection={<IconLogout size={17} />}

@@ -1,7 +1,7 @@
 import { Type, type Static } from '@sinclair/typebox';
 
 const strict = { additionalProperties: false };
-const ref = Type.String({ pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$' });
+const ref = Type.String({ minLength: 1, maxLength: 200, pattern: '^[A-Za-z0-9][A-Za-z0-9_.:/-]*$' });
 export const ConsoleConfigurationSchema = Type.Object({
   calling: Type.Object({
     enabled: Type.Boolean(),

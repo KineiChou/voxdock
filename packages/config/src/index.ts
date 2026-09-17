@@ -1,6 +1,7 @@
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { ChannelSchema, RefSchema } from "@voxdock/contracts";
+import { isIP } from 'node:net';
 
 const object = { additionalProperties: false } as const;
 const path = Type.String({ minLength: 1, maxLength: 4096 });
@@ -204,6 +205,7 @@ export function parseConfig(input: unknown): BridgeConfig {
     );
   }
   const config = value;
+  if (config.console.trusted_proxy_addresses.some(address => !isIP(address))) throw new ConfigError('Trusted console proxies must be literal IP addresses');
   if (config.console.enabled && !config.console.public_origin) {
     throw new ConfigError("Console requires a public origin");
   }

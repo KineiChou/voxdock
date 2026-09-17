@@ -5,7 +5,8 @@ export async function controlRequest(
   token: string,
   path: string,
   options: {
-    method?: "GET" | "POST";
+    method?: "GET" | "POST" | "PUT";
+    timeoutMs?: number;
     body?: unknown;
     key?: string;
     fetch?: typeof fetch;
@@ -16,7 +17,7 @@ export async function controlRequest(
     .replace(/^\[::\]:/, "[::1]:");
   const url = new URL(`http://${listen}${path}`);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 5000);
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 5000);
   try {
     const headers: Record<string, string> = {
       authorization: `Bearer ${token}`,

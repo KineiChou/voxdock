@@ -1,6 +1,8 @@
 import { Type } from '@sinclair/typebox';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { RefSchema, type ConsoleCallQuery } from '@voxdock/contracts';
+import { RefSchema, ConsoleConfigurationUpdateSchema, type ConsoleConfigurationUpdate, type ConsoleCallQuery } from '@voxdock/contracts';
+import { DomainError } from '@voxdock/core';
+import { registerConnectionRoutes } from './connection-routes.js';
 import type { BridgeServerOptions } from './server.js';
 import { createConsoleService } from './console-service.js';
 import { redactAudit, renderAudit } from './cli-api.js';
@@ -17,7 +19,17 @@ const time = Type.Optional(Type.String({ format: 'date-time', maxLength: 30 }));
 export function registerConsoleRoutes(app: FastifyInstance, prefix: string, options: BridgeServerOptions,
   endCall: (id: string, reply: FastifyReply) => unknown) {
   const service = createConsoleService(options);
+  if (options.connections) registerConnectionRoutes(app, prefix, options.connections);
   app.get(`${prefix}/settings`, async () => service.settings());
+  app.get(`${prefix}/control/status`, async () => ({ calling: service.settings().calling }));
+  app.get(`${prefix}/settings/configuration`, async () => {
+    if (!options.management) throw new DomainError('configuration_unavailable', 503);
+    return options.management.configuration.view(options.management.managing);
+  });
+  app.put<{ Body: ConsoleConfigurationUpdate }>(`${prefix}/settings/configuration`, { schema: { body: ConsoleConfigurationUpdateSchema } }, async request => {
+    if (!options.management) throw new DomainError('configuration_unavailable', 503);
+    return options.management.apply(request.body);
+  });
   app.get(`${prefix}/connections`, async () => service.connections());
   app.post(`${prefix}/control/pause`, { preValidation: emptyMutation }, async () => service.pause());
   app.post(`${prefix}/control/resume`, { preValidation: emptyMutation }, async () => service.resume());
@@ -35,6 +47,7 @@ export function registerConsoleRoutes(app: FastifyInstance, prefix: string, opti
     return options.store.consoleCalls({ ...request.query, limit: count });
   });
   app.get<{ Params: { call_id: string } }>(`${prefix}/calls/:call_id`, { schema: { params } }, async request => options.store.consoleCall(request.params.call_id));
+  app.get<{ Params: { call_id: string } }>(`${prefix}/calls/:call_id/conversation`, { schema: { params } }, async request => options.store.consoleConversation(request.params.call_id));
   app.get<{ Params: { call_id: string }; Querystring: { cursor?: string; limit?: string } }>(`${prefix}/calls/:call_id/transcripts`, {
     schema: { params, querystring: Type.Object({ cursor, limit: limit() }, strict) },
   }, async (request, reply) => {

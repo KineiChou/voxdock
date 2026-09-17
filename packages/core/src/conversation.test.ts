@@ -4,7 +4,7 @@ import { CallStore } from './index.js';
 import { aggregateConversation } from './conversation.js';
 const fragment = (seq: number, patch: Partial<TranscriptFragment> = {}): TranscriptFragment => ({
   id: `f${seq}`, session_id: 's1', speaker: 'user', seq, text: 'word', start_ms: seq * 10,
-  end_ms: seq * 10 + 10, final: false, context_revision: 1, ...patch,
+  end_ms: seq * 10 + 10, final: false, context_revision: seq + 1, ...patch,
 });
 it('preserves delta whitespace, Unicode and partial status without changing raw fragments', () => {
   const fragments = ['你', '好', ' world', '\n', 'cafe', '\u0301', '👩', '\u200d', '💻', '  !'].map((text, seq) => fragment(seq, { text }));
@@ -13,10 +13,10 @@ it('preserves delta whitespace, Unicode and partial status without changing raw 
     text: '你好 world\ncafé👩‍💻  !', final: false, fragment_count: 10 }]);
   expect(fragments).toEqual(before);
 });
-it('splits final boundaries, gaps, session/speaker switches, backwards timestamps and sequence/context restarts', () => {
+it('splits final boundaries, gaps, session/speaker switches, backwards timestamps and sequence restarts', () => {
   const cases: Partial<TranscriptFragment>[] = [
     { session_id: 's2' }, { speaker: 'assistant' }, { seq: 0 }, { seq: 4 },
-    { start_ms: 2000, end_ms: 2010 }, { start_ms: 0, end_ms: 5 }, { context_revision: 2 },
+    { start_ms: 2000, end_ms: 2010 }, { start_ms: 0, end_ms: 5 },
   ];
   for (const patch of cases) expect(aggregateConversation([fragment(1), fragment(2, patch)])).toHaveLength(2);
   const turns = aggregateConversation([fragment(0), fragment(1, { final: true }), fragment(2)]);

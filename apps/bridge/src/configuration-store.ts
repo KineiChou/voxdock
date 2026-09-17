@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync, copyFileSync, chmodSync } from 'node:fs';
+import { existsSync, mkdirSync, copyFileSync, chmodSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Value } from '@sinclair/typebox/value';
@@ -6,15 +6,13 @@ import { parseConfig, type BridgeConfig } from '@voxdock/config';
 import { ConsoleConfigurationSchema, ConsoleConfigurationUpdateSchema, type ConfigurationSecret, type ConsoleConfiguration, type ConsoleConfigurationUpdate, type ConsoleConfigurationView } from '@voxdock/contracts';
 import { DomainError } from '@voxdock/core';
 import { readPrivateText } from './cli-files.js';
+import { writePrivateFile } from './private-files.js';
 
 interface ConfigurationState { revision: number; settings: ConsoleConfiguration; secrets: Partial<Record<ConfigurationSecret, string>> }
 const slots = ['live_api_key', 'backend_request_token', 'backend_event_signing_key', 'telegram_api_hash'] as const;
 
 export function writePrivateJson(filename: string, data: unknown): void {
-  const temporary = `${filename}.${randomUUID()}.tmp`;
-  const fd = openSync(temporary, 'wx', 0o600);
-  try { writeFileSync(fd, JSON.stringify(data) + '\n'); fsyncSync(fd); } finally { closeSync(fd); }
-  renameSync(temporary, filename);
+  writePrivateFile(filename, JSON.stringify(data) + '\n');
 }
 
 function fromConfig(config: BridgeConfig): ConsoleConfiguration {
@@ -51,14 +49,21 @@ export class ConfigurationStore {
   }
   prepareSessionDirectory(): void {
     mkdirSync(this.secretsDirectory, { recursive: true, mode: 0o700 });
+    const imported = join(this.secretsDirectory, 'telegram-session-imported');
+    if (existsSync(imported)) return;
     const previous = this.baseline.channels.telegram.session_file;
     if (this.state.revision === 0 && previous && existsSync(resolve(this.directory, previous)) && !existsSync(this.telegramSession)) {
       copyFileSync(resolve(this.directory, previous), this.telegramSession);
       chmodSync(this.telegramSession, 0o600);
     }
+    writePrivateFile(imported, 'imported\n');
   }
   effective(state = this.state): BridgeConfig {
     const config = structuredClone(this.baseline);
+    if (state.revision === 0) {
+      config.channels.telegram.session_file = this.telegramSession;
+      return config;
+    }
     const settings = state.settings;
     Object.assign(config.calling, settings.calling);
     Object.assign(config.live, settings.live);
@@ -96,7 +101,7 @@ export class ConfigurationStore {
       if (value === undefined) continue;
       if (!value.trim() || /[\r\n\0]/.test(value.trim())) throw new DomainError('invalid_credential', 400);
       const name = `${slot}.${randomUUID()}`;
-      writeFileSync(join(this.secretsDirectory, name), value.trim() + '\n', { flag: 'wx', mode: 0o600 });
+      writePrivateFile(join(this.secretsDirectory, name), value.trim() + '\n');
       next.secrets[slot] = name;
     }
     const config = this.effective(next);

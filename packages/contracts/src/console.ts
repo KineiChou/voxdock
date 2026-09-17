@@ -94,6 +94,7 @@ export interface ConsoleSession {
 }
 export interface ConsoleConnection {
   channel: Channel;
+  authenticated: boolean;
   enabled: boolean;
   ready: boolean;
   account_ref: string | null;
@@ -105,7 +106,7 @@ export interface ConsoleConnections {
   channels: ConsoleConnection[];
 }
 export interface ConsoleSettings {
-  mode: 'file';
+  mode: 'file' | 'managed';
   calling: {
     configured_enabled: boolean;
     paused: boolean;

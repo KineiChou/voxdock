@@ -1,4 +1,4 @@
-import { accessSync, constants, statSync } from "node:fs";
+import { accessSync, constants, existsSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import type { BridgeConfig } from "@voxdock/config";
@@ -49,7 +49,14 @@ export function doctor(
       checks.push({ name, status: "fail" });
     }
   }
-  if (config.console.enabled) {
+  const accountFile = resolve(directory, config.service.data_dir, 'console-account.json');
+  if (config.console.enabled && existsSync(accountFile)) {
+    file('console_account', accountFile);
+    try {
+      const account = JSON.parse(readPrivateText(accountFile)) as { password_hash?: unknown };
+      checks.push({ name: 'console_password_hash', status: typeof account.password_hash === 'string' && isConsolePasswordHash(account.password_hash) ? 'pass' : 'fail' });
+    } catch { checks.push({ name: 'console_password_hash', status: 'fail' }); }
+  } else if (config.console.enabled && config.console.password_hash_file) {
     file("console_password_file", config.console.password_hash_file);
     try {
       const hash = readPrivateText(resolve(directory, config.console.password_hash_file!));
@@ -57,12 +64,12 @@ export function doctor(
     } catch {
       checks.push({ name: "console_password_hash", status: "fail" });
     }
-  }
+  } else if (config.console.enabled) checks.push({ name: 'console_account_bootstrap', status: 'unverified' });
   if (config.channels.telegram.enabled) {
     const channel = config.channels.telegram;
     checks.push({
       name: "telegram_api_id",
-      status: /^[1-9]\d*$/.test(environment[channel.api_id_env] ?? "")
+      status: (channel.api_id || /^[1-9]\d*$/.test(channel.api_id_env ? environment[channel.api_id_env] ?? '' : ''))
         ? "pass"
         : "fail",
     });
@@ -87,7 +94,7 @@ export function doctor(
   ))
     checks.push({
       name: `target_${target.id}`,
-      status: environment[target.peer_id_env] ? "pass" : "fail",
+      status: (target.peer_id || (target.peer_id_env && environment[target.peer_id_env])) ? "pass" : "fail",
     });
   if (config.channels.telegram.enabled || config.channels.whatsapp.enabled) {
     file("live_api_key", config.live.api_key_file);
