@@ -48,6 +48,7 @@ export function useConfigurationForm(initial: ConsoleConfigurationView) {
       setSettings(structuredClone(next.settings));
       setSecrets({});
       setSaved(true);
+      queryClient.setQueryData(["/settings/configuration"], next);
       await queryClient.invalidateQueries();
       return true;
     } catch (error) {
