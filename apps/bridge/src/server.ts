@@ -6,6 +6,7 @@ import { createConsoleService } from './console-service.js';
 import { enforceConsoleManagementAccess } from './console-network.js';
 import type { RuntimeManager } from './runtime-manager.js';
 import type { ConnectionService } from './connection-service.js';
+import type { TelegramPairingService } from './telegram-pairing-service.js';
 import type { TargetPairingService } from './target-pairing-service.js';
 import swagger from '@fastify/swagger';
 import { Type } from '@sinclair/typebox';
@@ -24,6 +25,7 @@ export interface BridgeServerOptions {
   mode?: 'native' | 'simulation';
   readyChannels?: ReadonlySet<Channel>;
   management?: RuntimeManager;
+  telegramPairing?: TelegramPairingService;
   connections?: ConnectionService;
   targetPairing?: TargetPairingService;
   onCallCreated?: (call: CallStatus) => Promise<void>;

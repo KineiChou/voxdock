@@ -21,7 +21,7 @@ Your backend owns task execution, permissions, project routing and long-term mem
 | Area | Implemented | Validation boundary |
 | --- | --- | --- |
 | Control and records | HTTP contracts, durable admission, recovery and event outbox | Automated tests and a paused ARM64 deployment; real account operations unverified |
-| Operator console | Username/password login, dashboard, audits, managed configuration, Telegram/WhatsApp pairing and CLI parity | Single operator; WhatsApp QR/message/call setup requires handset acceptance |
+| Operator console | Username/password login, dashboard, audits, managed configuration, Telegram/WhatsApp pairing and CLI parity | Single operator; Telegram QR/message/call setup and WhatsApp setup require handset acceptance |
 | Telegram | MTProto/NTgCalls driver and Live runtime path | Fixtures and account-free native checks; handset calls unverified |
 | GPT-Live-1 | Primary WebSocket, PCM, transcripts, client delegation and finite close | Real 16 kHz session, phone greeting and one delegation; interruption and endurance remain unverified |
 | WhatsApp | WaCalls control/media, stored identity mapping and shared Live runtime | Two-minute outgoing conversation heard; normal handset termination and corrected incoming admission remain open |

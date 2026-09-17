@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { RefSchema, ConsoleConfigurationUpdateSchema, ConsoleSettingsOptionsSchema, type ConsoleConfigurationUpdate, type ConsoleCallQuery } from '@voxdock/contracts';
 import { DomainError } from '@voxdock/core';
 import { registerConnectionRoutes } from './connection-routes.js';
+import { registerTelegramPairingRoutes } from './telegram-pairing-routes.js';
 import { registerTargetPairingRoutes } from './target-pairing-routes.js';
 import { saveTelegramTarget } from './connection-targets.js';
 import type { BridgeServerOptions } from './server.js';
@@ -23,6 +24,7 @@ export function registerConsoleRoutes(app: FastifyInstance, prefix: string, opti
   endCall: (id: string, reply: FastifyReply) => unknown) {
   const service = createConsoleService(options);
   if (options.connections) registerConnectionRoutes(app, prefix, options.connections);
+  if (options.telegramPairing) registerTelegramPairingRoutes(app, prefix, options.telegramPairing);
   if (options.targetPairing) registerTargetPairingRoutes(app, prefix, options.targetPairing);
   app.post<{ Body: { peer_id: string; enabled: boolean } }>(`${prefix}/connections/telegram/target`, {
     schema: { body: Type.Object({ peer_id: Type.String({ pattern: '^[1-9][0-9]{0,18}$' }), enabled: Type.Boolean() }, strict) },

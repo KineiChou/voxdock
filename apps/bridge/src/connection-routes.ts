@@ -14,6 +14,7 @@ export function registerConnectionRoutes(app: FastifyInstance, prefix: string, s
     }
   };
   app.post<{ Body: { phone: string } }>(`${prefix}/connections/telegram/login`, { schema: { body: Type.Object({ phone: Type.String({ pattern: '^\\+[1-9][0-9]{6,14}$' }) }, strict) } }, (request, reply) => invoke(reply, () => service.startTelegram(request.body.phone)));
+  app.post(`${prefix}/connections/telegram/qr`, { schema: { body: empty } }, (_, reply) => invoke(reply, () => service.startTelegramQr()));
   app.post(`${prefix}/connections/whatsapp/connect`, { schema: { body: empty } }, (_, reply) => invoke(reply, () => service.startWhatsApp()));
   app.post(`${prefix}/connections/whatsapp/unlink`, { schema: { body: empty } }, (_, reply) => invoke(reply, () => service.unlinkWhatsApp()));
   app.get<{ Params: { id: string } }>(`${prefix}/connections/flows/:id`, { schema: { params: challenge } }, (request, reply) => invoke(reply, () => service.flow(request.params.id)));
