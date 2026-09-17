@@ -1,0 +1,536 @@
+diff --git a/cmd/server/connection.go b/cmd/server/connection.go
+index 08a7fda..8d609f8 100644
+--- a/cmd/server/connection.go
++++ b/cmd/server/connection.go
+@@ -1,6 +1,7 @@
+ package main
+ 
+ import (
++	"context"
+ 	"go.mau.fi/whatsmeow"
+ 	"net/http"
+ 	"regexp"
+@@ -24,7 +25,13 @@ func (s *server) connectionStatus(w http.ResponseWriter, sess *Session) {
+ 		a.State = "disconnected"
+ 		a.QR = ""
+ 	}
+-	writeJSON(w, http.StatusOK, map[string]any{"paired": sess.client.Store.ID != nil, "state": a.State, "qr": a.QR})
++	result := map[string]any{"paired": sess.client.Store.ID != nil, "state": a.State, "qr": a.QR}
++	if id := sess.client.Store.ID; id != nil {
++		if phone := targetPhone(context.Background(), *id, sess.client.Store.LIDs); phone != "" {
++			result["phone"] = phone
++		}
++	}
++	writeJSON(w, http.StatusOK, result)
+ }
+ func (s *server) handleConnectionStatus(w http.ResponseWriter, r *http.Request) {
+ 	connectionMu.Lock()
+@@ -86,6 +93,7 @@ func (s *server) handleConnectionDisconnect(w http.ResponseWriter, r *http.Reque
+ 		}
+ 		done := sess.pairingDone
+ 		sess.mu.Unlock()
++		sess.cancelTarget()
+ 		sess.client.Disconnect()
+ 		if done != nil {
+ 			<-done
+diff --git a/cmd/server/httpapi.go b/cmd/server/httpapi.go
+index 7ef6fea..a131ad4 100644
+--- a/cmd/server/httpapi.go
++++ b/cmd/server/httpapi.go
+@@ -14,6 +14,9 @@ import (
+ 
+ func (s *server) routes() http.Handler {
+ 	mux := http.NewServeMux()
++	mux.HandleFunc("POST /api/voxdock/sessions/{sid}/target-pairing", s.handleTargetPairingStart)
++	mux.HandleFunc("GET /api/voxdock/sessions/{sid}/target-pairing/{id}", s.handleTargetPairingGet)
++	mux.HandleFunc("POST /api/voxdock/sessions/{sid}/target-pairing/{id}/cancel", s.handleTargetPairingCancel)
+ 	mux.HandleFunc("GET /api/voxdock/sessions/{sid}", s.handleConnectionStatus)
+ 	mux.HandleFunc("POST /api/voxdock/sessions/{sid}/connect", s.handleConnectionConnect)
+ 	mux.HandleFunc("POST /api/voxdock/sessions/{sid}/disconnect", s.handleConnectionDisconnect)
+diff --git a/cmd/server/session.go b/cmd/server/session.go
+index f81b574..f95cf80 100644
+--- a/cmd/server/session.go
++++ b/cmd/server/session.go
+@@ -2,6 +2,7 @@ package main
+ 
+ import (
+ 	"context"
++	"errors"
+ 	"log/slog"
+ 	"sync"
+ 	"time"
+@@ -27,6 +28,7 @@ type Session struct {
+ 	client *whatsmeow.Client
+ 	reg    *callRegistry
+ 
++	target        *targetPairing
+ 	mu            sync.Mutex
+ 	auth          AuthSnapshot
+ 	pairingCancel context.CancelFunc
+@@ -97,8 +99,15 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
+ }
+ 
+ func (s *Session) startOutgoing(ctx context.Context, peer types.JID, isVideo bool) (string, error) {
++	s.mu.Lock()
++	s.expireTargetLocked(time.Now())
++	if s.target != nil && (s.target.State == "waiting" || s.target.State == "candidate") {
++		s.mu.Unlock()
++		return "", errors.New("target pairing active")
++	}
+ 	callID := signaling.GenerateCallID()
+ 	cm := s.createCall(callID)
++	s.mu.Unlock()
+ 	if err := cm.StartCall(ctx, callID, peer, isVideo); err != nil {
+ 		s.removeCall(callID)
+ 		return "", err
+@@ -115,6 +124,11 @@ func (s *Session) callForEvent(from types.JID, data *waBinary.Node) (*activeCall
+ }
+ 
+ func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	if s.consumeTargetCall(ctx, evt) {
++		return
++	}
+ 	node := wrapCall(evt.From, evt.Data)
+ 	callID := callIDFromNode(node)
+ 	if callID == "" {
+@@ -139,7 +153,7 @@ func (s *Session) rejectOffer(ctx context.Context, node *waBinary.Node, from typ
+ 	}
+ 	reject := signaling.BuildRejectStanza(from, info.CallID, wanode.MustJID(creator))
+ 	_ = wa.NewSocket(s.client).SendNode(ctx, reject)
+-	s.log.Info("inbound call rejected: session at capacity", "call_id", info.CallID)
++
+ }
+ 
+ func (s *Session) handleEvent(rawEvt any) {
+@@ -151,9 +165,13 @@ func (s *Session) handleEvent(rawEvt any) {
+ 		}
+ 		s.setAuth(AuthSnapshot{State: "open", Paired: true})
+ 	case *events.Disconnected:
++		s.cancelTarget()
+ 		s.setAuth(AuthSnapshot{State: "disconnected", Paired: s.client.Store.ID != nil})
+ 	case *events.LoggedOut:
++		s.cancelTarget()
+ 		s.setAuth(AuthSnapshot{State: "logged_out", Paired: false})
++	case *events.Message:
++		s.observeTargetMessage(evt)
+ 	case *events.CallOffer:
+ 		s.onIncomingOffer(ctx, evt)
+ 	case *events.CallAccept:
+@@ -282,6 +300,7 @@ func (s *Session) teardownAllCalls() {
+ }
+ 
+ func (s *Session) replaceClient(client *whatsmeow.Client) {
++	s.cancelTarget()
+ 	s.teardownAllCalls()
+ 	s.client.Disconnect()
+ 	s.client = client
+@@ -289,6 +308,7 @@ func (s *Session) replaceClient(client *whatsmeow.Client) {
+ }
+ 
+ func (s *Session) shutdown() {
++	s.cancelTarget()
+ 	s.teardownAllCalls()
+ 	s.client.Disconnect()
+ }
+diff --git a/cmd/server/targetpairing.go b/cmd/server/targetpairing.go
+new file mode 100644
+index 0000000..2622c61
+--- /dev/null
++++ b/cmd/server/targetpairing.go
+@@ -0,0 +1,235 @@
++package main
++
++import (
++	"context"
++	"encoding/json"
++	"io"
++	"net/http"
++	"regexp"
++	"time"
++
++	"github.com/google/uuid"
++	"go.mau.fi/whatsmeow/types"
++	"go.mau.fi/whatsmeow/types/events"
++	"google.golang.org/protobuf/reflect/protoreflect"
++)
++
++type targetCandidate struct {
++	ID    string `json:"id"`
++	Phone string `json:"phone"`
++}
++type targetPairing struct {
++	ID        string           `json:"id"`
++	Method    string           `json:"method"`
++	State     string           `json:"state"`
++	ExpiresAt time.Time        `json:"expires_at"`
++	Candidate *targetCandidate `json:"candidate,omitempty"`
++	code      string
++	armedAt   time.Time
++}
++
++var targetCode = regexp.MustCompile(`^VOX-[A-F0-9]{12}$`)
++
++func canonicalUUID(value string) bool {
++	parsed, err := uuid.Parse(value)
++	return err == nil && parsed.String() == value
++}
++func (s *Session) expireTargetLocked(now time.Time) {
++	if p := s.target; p != nil && (p.State == "waiting" || p.State == "candidate") && !now.Before(p.ExpiresAt) {
++		p.State = "expired"
++		p.code = ""
++		p.Candidate = nil
++	}
++}
++func (s *Session) cancelTarget() {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	if s.target != nil {
++		s.target.State = "cancelled"
++		s.target.code = ""
++		s.target.Candidate = nil
++	}
++}
++func targetPhone(ctx context.Context, jid types.JID, lookup storedLIDLookup) string {
++	if jid.Server == types.HiddenUserServer {
++		mapped := storedPeerPhone(ctx, jid.String(), lookup)
++		var err error
++		jid, err = types.ParseJID(mapped)
++		if err != nil {
++			return ""
++		}
++	}
++	if jid.Server != types.DefaultUserServer || !phoneUser.MatchString(jid.User) {
++		return ""
++	}
++	return "+" + jid.User
++}
++func (s *Session) observeTargetLocked(ctx context.Context, jid types.JID, timestamp time.Time) {
++	p := s.target
++	if p == nil || p.State != "waiting" || timestamp.Before(p.armedAt) || timestamp.After(time.Now().Add(5*time.Second)) {
++		return
++	}
++	phone := targetPhone(ctx, jid, s.client.Store.LIDs)
++	own := ""
++	if s.client.Store.ID != nil {
++		own = targetPhone(ctx, *s.client.Store.ID, s.client.Store.LIDs)
++	}
++	if phone == "" || phone == own {
++		return
++	}
++	p.Candidate = &targetCandidate{ID: uuid.NewString(), Phone: phone}
++	p.State = "candidate"
++	p.code = ""
++}
++
++// Only ordinary text is eligible. Reflection rejects any additional payload field.
++func plainTargetText(evt *events.Message) string {
++	if evt == nil || evt.Message == nil || evt.SourceWebMsg != nil || evt.UnavailableRequestID != "" || evt.RetryCount != 0 || evt.NewsletterMeta != nil || evt.IsEphemeral || evt.IsViewOnce || evt.IsViewOnceV2 || evt.IsViewOnceV2Extension || evt.IsDocumentWithCaption || evt.IsLottieSticker || evt.IsBotInvoke || evt.IsEdit {
++		return ""
++	}
++	i := evt.Info
++	if i.IsFromMe || i.IsGroup || i.Multicast || i.Edit != "" || i.DeviceSentMeta != nil || i.Category != "" || i.MsgBotInfo.EditType != "" || i.MsgBotInfo.EditTargetID != "" || !i.MsgBotInfo.EditSenderTimestampMS.IsZero() || i.MsgMetaInfo.TargetID != "" || !i.MsgMetaInfo.TargetSender.IsEmpty() || !i.MsgMetaInfo.TargetChat.IsEmpty() || !i.BroadcastListOwner.IsEmpty() || len(i.BroadcastRecipients) > 0 {
++		return ""
++	}
++	if i.Chat.Server != types.DefaultUserServer && i.Chat.Server != types.HiddenUserServer {
++		return ""
++	}
++	if i.Chat.ToNonAD() != i.Sender.ToNonAD() {
++		return ""
++	}
++	text := ""
++	valid := true
++	evt.Message.ProtoReflect().Range(func(f protoreflect.FieldDescriptor, v protoreflect.Value) bool {
++		if string(f.Name()) == "conversation" {
++			text = v.String()
++		} else {
++			valid = false
++		}
++		return true
++	})
++	if !valid || len(evt.Message.ProtoReflect().GetUnknown()) != 0 {
++		return ""
++	}
++	if evt.RawMessage != nil && !textOnlyRaw(evt.RawMessage.ProtoReflect()) {
++		return ""
++	}
++	return text
++}
++func textOnlyRaw(m protoreflect.Message) bool {
++	valid := len(m.GetUnknown()) == 0
++	m.Range(func(f protoreflect.FieldDescriptor, v protoreflect.Value) bool {
++		if string(f.Name()) != "conversation" {
++			valid = false
++		}
++		return true
++	})
++	return valid
++}
++func (s *Session) observeTargetMessage(evt *events.Message) {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	s.expireTargetLocked(time.Now())
++	if s.target == nil || s.target.State != "waiting" || s.target.Method != "message" {
++		return
++	}
++	if text := plainTargetText(evt); text != "" && text == s.target.code {
++		s.observeTargetLocked(context.Background(), evt.Info.Sender, evt.Info.Timestamp)
++	}
++}
++func (s *Session) consumeTargetCall(ctx context.Context, evt *events.CallOffer) bool {
++	s.expireTargetLocked(time.Now())
++	p := s.target
++	if p == nil || (p.State != "waiting" && p.State != "candidate") {
++		return false
++	}
++	if p.Method == "call" && evt.GroupJID.IsEmpty() {
++		s.observeTargetLocked(ctx, evt.From, evt.Timestamp)
++	}
++	// Reject before creating a call manager, ledger entry, or event stream record.
++	bounded, cancel := context.WithTimeout(ctx, 2*time.Second)
++	defer cancel()
++	s.rejectOffer(bounded, wrapCall(evt.From, evt.Data), evt.From)
++	return true
++}
++func (s *server) handleTargetPairingStart(w http.ResponseWriter, r *http.Request) {
++	w.Header().Set("Cache-Control", "no-store")
++	var req struct {
++		ID        string    `json:"id"`
++		Method    string    `json:"method"`
++		Code      string    `json:"code,omitempty"`
++		ExpiresAt time.Time `json:"expires_at"`
++	}
++	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
++	dec.DisallowUnknownFields()
++	if err := dec.Decode(&req); err != nil {
++		writeJSON(w, 400, map[string]string{"error": "invalid request"})
++		return
++	}
++	var extra any
++	if dec.Decode(&extra) != io.EOF {
++		writeJSON(w, 400, map[string]string{"error": "invalid request"})
++		return
++	}
++	now := time.Now()
++	if !canonicalUUID(req.ID) || (req.Method != "message" && req.Method != "call") || (req.Method == "message" && !targetCode.MatchString(req.Code)) || (req.Method == "call" && req.Code != "") || !req.ExpiresAt.After(now) || req.ExpiresAt.After(now.Add(3*time.Minute)) {
++		writeJSON(w, 400, map[string]string{"error": "invalid request"})
++		return
++	}
++	connectionMu.Lock()
++	defer connectionMu.Unlock()
++	sess, ok := s.sessions.Get(r.PathValue("sid"))
++	if !ok {
++		writeJSON(w, 404, map[string]string{"error": "session not found"})
++		return
++	}
++	sess.mu.Lock()
++	defer sess.mu.Unlock()
++	sess.expireTargetLocked(now)
++	if sess.client.Store.ID == nil || !sess.client.IsConnected() || !sess.client.IsLoggedIn() || sess.reg.count() != 0 || (sess.target != nil && (sess.target.State == "waiting" || sess.target.State == "candidate")) {
++		writeJSON(w, 409, map[string]string{"error": "session unavailable"})
++		return
++	}
++	sess.target = &targetPairing{ID: req.ID, Method: req.Method, State: "waiting", ExpiresAt: req.ExpiresAt, code: req.Code, armedAt: now}
++	writeJSON(w, 201, sess.target)
++}
++func (s *server) handleTargetPairingGet(w http.ResponseWriter, r *http.Request) {
++	s.targetPairingResult(w, r, false)
++}
++func (s *server) handleTargetPairingCancel(w http.ResponseWriter, r *http.Request) {
++	s.targetPairingResult(w, r, true)
++}
++func (s *server) targetPairingResult(w http.ResponseWriter, r *http.Request, cancel bool) {
++	w.Header().Set("Cache-Control", "no-store")
++	if cancel {
++		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16))
++		dec.DisallowUnknownFields()
++		var body struct{}
++		if err := dec.Decode(&body); err != nil && err != io.EOF {
++			writeJSON(w, 400, map[string]string{"error": "invalid request"})
++			return
++		}
++		var extra any
++		if dec.Decode(&extra) != io.EOF {
++			writeJSON(w, 400, map[string]string{"error": "invalid request"})
++			return
++		}
++	}
++	sess, ok := s.sessions.Get(r.PathValue("sid"))
++	if !ok {
++		writeJSON(w, 404, map[string]string{"error": "pairing not found"})
++		return
++	}
++	sess.mu.Lock()
++	defer sess.mu.Unlock()
++	sess.expireTargetLocked(time.Now())
++	if !canonicalUUID(r.PathValue("id")) || sess.target == nil || sess.target.ID != r.PathValue("id") {
++		writeJSON(w, 404, map[string]string{"error": "pairing not found"})
++		return
++	}
++	if cancel {
++		sess.target.State = "cancelled"
++		sess.target.code = ""
++		sess.target.Candidate = nil
++	}
++	writeJSON(w, 200, sess.target)
++}
+diff --git a/cmd/server/targetpairing_test.go b/cmd/server/targetpairing_test.go
+new file mode 100644
+index 0000000..2259359
+--- /dev/null
++++ b/cmd/server/targetpairing_test.go
+@@ -0,0 +1,153 @@
++package main
++
++import (
++	"context"
++	"github.com/google/uuid"
++	"go.mau.fi/whatsmeow/proto/waE2E"
++	"go.mau.fi/whatsmeow/proto/waWeb"
++	"go.mau.fi/whatsmeow/types"
++	"go.mau.fi/whatsmeow/types/events"
++	"google.golang.org/protobuf/proto"
++	"net/http/httptest"
++	"strings"
++	"sync"
++	"testing"
++	"time"
++)
++
++func pairingMessage(phone, code string) *events.Message {
++	jid := types.NewJID(phone, types.DefaultUserServer)
++	return &events.Message{Info: types.MessageInfo{MessageSource: types.MessageSource{Sender: jid, Chat: jid}, Timestamp: time.Now()}, Message: &waE2E.Message{Conversation: proto.String(code)}}
++}
++func armTestTarget(s *Session, method string) {
++	s.target = &targetPairing{ID: uuid.NewString(), Method: method, State: "waiting", ExpiresAt: time.Now().Add(time.Minute), armedAt: time.Now().Add(-time.Second), code: "VOX-012345ABCDEF"}
++}
++func TestTargetMessageFiltering(t *testing.T) {
++	for name, modify := range map[string]func(*events.Message){
++		"history": func(e *events.Message) { e.SourceWebMsg = &waWeb.WebMessageInfo{} },
++		"self":    func(e *events.Message) { e.Info.IsFromMe = true }, "group": func(e *events.Message) { e.Info.IsGroup = true }, "broadcast": func(e *events.Message) { e.Info.Chat = types.NewJID("status", types.BroadcastServer) }, "edit": func(e *events.Message) { e.IsEdit = true }, "bot": func(e *events.Message) { e.IsBotInvoke = true }, "retry": func(e *events.Message) { e.RetryCount = 1 }, "sync": func(e *events.Message) { e.UnavailableRequestID = "id" }, "wrapper": func(e *events.Message) { e.IsEphemeral = true }, "payload": func(e *events.Message) { e.Message.ImageMessage = &waE2E.ImageMessage{} }, "text": func(e *events.Message) { e.Message.Conversation = proto.String("ordinary private text") }, "stale": func(e *events.Message) { e.Info.Timestamp = time.Now().Add(-time.Hour) }, "lid": func(e *events.Message) {
++			e.Info.Sender = types.NewJID("1234567890", types.HiddenUserServer)
++			e.Info.Chat = e.Info.Sender
++		},
++	} {
++		t.Run(name, func(t *testing.T) {
++			mgr := newTestManager(t)
++			s := mgr.addUnconnected(t, "test")
++			armTestTarget(s, "message")
++			e := pairingMessage("1234567890", s.target.code)
++			modify(e)
++			s.observeTargetMessage(e)
++			if s.target.State != "waiting" {
++				t.Fatal("ineligible event accepted")
++			}
++		})
++	}
++}
++func TestTargetFirstCandidateAndCancellation(t *testing.T) {
++	mgr := newTestManager(t)
++	s := mgr.addUnconnected(t, "test")
++	armTestTarget(s, "message")
++	s.observeTargetMessage(pairingMessage("1234567890", s.target.code))
++	if s.target.Candidate == nil || s.target.Candidate.Phone != "+1234567890" {
++		t.Fatal("missing canonical candidate")
++	}
++	id := s.target.Candidate.ID
++	s.observeTargetMessage(pairingMessage("1234567891", "VOX-012345ABCDEF"))
++	if s.target.Candidate.ID != id {
++		t.Fatal("overwritten")
++	}
++	s.cancelTarget()
++	s.observeTargetMessage(pairingMessage("1234567891", "VOX-012345ABCDEF"))
++	if s.target.Candidate != nil || s.target.code != "" {
++		t.Fatal("cancel retained secret or candidate")
++	}
++}
++func TestTargetExpiryAndOwnAccount(t *testing.T) {
++	mgr := newTestManager(t)
++	s := mgr.addUnconnected(t, "test")
++	jid := types.NewJID("1234567890", types.DefaultUserServer)
++	s.client.Store.ID = &jid
++	armTestTarget(s, "message")
++	s.observeTargetMessage(pairingMessage(jid.User, s.target.code))
++	if s.target.Candidate != nil {
++		t.Fatal("own account accepted")
++	}
++	s.target.ExpiresAt = time.Now().Add(-time.Second)
++	s.observeTargetMessage(pairingMessage("1234567891", s.target.code))
++	if s.target.State != "expired" || s.target.code != "" {
++		t.Fatal("expiry not enforced")
++	}
++	if targetPhone(context.Background(), types.NewJID("1234567890", types.HiddenUserServer), nil) != "" {
++		t.Fatal("LID treated as phone")
++	}
++}
++func TestTargetConcurrentCancel(t *testing.T) {
++	mgr := newTestManager(t)
++	s := mgr.addUnconnected(t, "test")
++	armTestTarget(s, "message")
++	var wg sync.WaitGroup
++	for i := 0; i < 20; i++ {
++		wg.Add(1)
++		go func() {
++			defer wg.Done()
++			s.observeTargetMessage(pairingMessage("1234567890", "VOX-012345ABCDEF"))
++			s.cancelTarget()
++		}()
++	}
++	wg.Wait()
++	if s.target.State != "cancelled" || s.target.Candidate != nil {
++		t.Fatal("late candidate survived")
++	}
++}
++func TestTargetHTTPValidationAndUnknownID(t *testing.T) {
++	srv := &server{sessions: newTestManager(t)}
++	for _, body := range []string{`{}`, `{"extra":true}`, strings.Repeat("x", 1025), `{"id":"nope","method":"call"}`} {
++		r := httptest.NewRequest("POST", "/", strings.NewReader(body))
++		w := httptest.NewRecorder()
++		srv.handleTargetPairingStart(w, r)
++		if w.Code != 400 {
++			t.Fatalf("status %d", w.Code)
++		}
++	}
++	s := srv.sessions.addUnconnected(t, "test")
++	armTestTarget(s, "message")
++	r := httptest.NewRequest("GET", "/", nil)
++	r.SetPathValue("sid", s.id)
++	r.SetPathValue("id", uuid.NewString())
++	w := httptest.NewRecorder()
++	srv.handleTargetPairingGet(w, r)
++	if w.Code != 404 {
++		t.Fatal("unknown id accepted")
++	}
++	r.SetPathValue("id", s.target.ID)
++	w = httptest.NewRecorder()
++	srv.handleTargetPairingGet(w, r)
++	if strings.Contains(w.Body.String(), "VOX-") {
++		t.Fatal("code leaked")
++	}
++	w = httptest.NewRecorder()
++	srv.handleTargetPairingCancel(w, r)
++	if s.target.State != "cancelled" {
++		t.Fatal("cancellation incomplete")
++	}
++}
++func TestTargetCallConsumesBeforeLedgerAndFreezes(t *testing.T) {
++	mgr := newTestManager(t)
++	s := mgr.addUnconnected(t, "test")
++	armTestTarget(s, "call")
++	offer := &events.CallOffer{BasicCallMeta: types.BasicCallMeta{From: types.NewJID("1234567890", types.DefaultUserServer), Timestamp: time.Now()}}
++	s.onIncomingOffer(context.Background(), offer)
++	if s.target.Candidate == nil || !canonicalUUID(s.target.Candidate.ID) || s.reg.count() != 0 {
++		t.Fatal("call did not produce isolated UUID candidate")
++	}
++	id := s.target.Candidate.ID
++	offer.From = types.NewJID("1234567891", types.DefaultUserServer)
++	s.onIncomingOffer(context.Background(), offer)
++	if s.target.Candidate.ID != id || s.reg.count() != 0 {
++		t.Fatal("pending candidate overwritten or call created")
++	}
++	s.shutdown()
++	if s.target.State != "cancelled" {
++		t.Fatal("shutdown left observer")
++	}
++}

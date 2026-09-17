@@ -16,8 +16,10 @@ source_url=${WACALLS_SOURCE_DIR:-https://github.com/JotaDev66/WaCalls.git}
 git clone --no-checkout -- "$source_url" "$build_dir/source"
 git -C "$build_dir/source" checkout --detach "$revision"
 [[ $(git -C "$build_dir/source" rev-parse HEAD) == "$revision" ]]
-git -C "$build_dir/source" apply --check "$repo_dir/patches/wacalls/media-websocket.patch"
-git -C "$build_dir/source" apply "$repo_dir/patches/wacalls/media-websocket.patch"
+for patch in media-websocket console-connections target-pairing; do
+  git -C "$build_dir/source" apply --check "$repo_dir/patches/wacalls/$patch.patch"
+  git -C "$build_dir/source" apply "$repo_dir/patches/wacalls/$patch.patch"
+done
 cd -- "$build_dir/source"
 env GOOS="$(go env GOHOSTOS)" GOARCH="$(go env GOHOSTARCH)" go test ./cmd/server ./internal/voip/call
 mkdir -p "$build_dir/artifacts"
@@ -29,9 +31,9 @@ cp LICENSE "$build_dir/artifacts/WaCalls-LICENSE"
   echo "revision=$revision"
   go version
   if command -v sha256sum >/dev/null; then
-    sha256sum "$repo_dir/patches/wacalls/media-websocket.patch" "$build_dir/artifacts/"wacalls-server*
+    sha256sum "$repo_dir/patches/wacalls/"*.patch "$build_dir/artifacts/"wacalls-server*
   else
-    shasum -a 256 "$repo_dir/patches/wacalls/media-websocket.patch" "$build_dir/artifacts/"wacalls-server*
+    shasum -a 256 "$repo_dir/patches/wacalls/"*.patch "$build_dir/artifacts/"wacalls-server*
   fi
 } > "$build_dir/artifacts/provenance.txt"
 echo "Built artifacts: $build_dir/artifacts"
