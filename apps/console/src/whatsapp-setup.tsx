@@ -85,20 +85,37 @@ export function WhatsAppSetup() {
     setBusy(true);
     setError(null);
     try {
-      if (activePairing(pairing))
-        await api(`${pairingPath}/${encodeURIComponent(pairing!.id)}/cancel`, {
-          method: "POST",
-          body: "{}",
+      await queryClient.cancelQueries({ queryKey: ["target-pairing"] });
+      if (activePairing(pairing)) {
+        const result = await api<Pairing>(
+          `${pairingPath}/${encodeURIComponent(pairing!.id)}/cancel`,
+          {
+            method: "POST",
+            body: "{}",
+          },
+        );
+        queryClient.setQueryData(["target-pairing", result.id], result);
+        setPairing(result);
+        if (result.state === "failed" || result.error) {
+          setError(new ApiError(409, result.error));
+          return;
+        }
+      }
+      if (connection && !connectionTerminal(connection)) {
+        await queryClient.cancelQueries({
+          queryKey: ["connection-flow", connection.id],
         });
-      if (
-        !setup.data?.connected &&
-        connection &&
-        !connectionTerminal(connection)
-      )
-        await api(
+        const result = await api<ConnectionFlow>(
           `/connections/flows/${encodeURIComponent(connection.id)}/cancel`,
           { method: "POST", body: "{}" },
         );
+        queryClient.setQueryData(["connection-flow", result.id], result);
+        setConnection(result);
+        if (result.state === "failed" || result.error) {
+          setError(new ApiError(409, result.error));
+          return;
+        }
+      }
       await queryClient.cancelQueries({ queryKey: ["target-pairing"] });
       queryClient.removeQueries({ queryKey: ["target-pairing"] });
       setPairing(null);
@@ -112,6 +129,8 @@ export function WhatsAppSetup() {
     }
   }
   const current = setup.data;
+  const linking =
+    !current?.connected || !!(connection && connection.state !== "connected");
   return (
     <Stack mt="lg" gap="sm">
       {setup.error && (
@@ -123,8 +142,8 @@ export function WhatsAppSetup() {
             ["Connected number", current.account_phone ?? "Not connected"],
             ["Receive calls at", current.target?.phone ?? "Not paired"],
             [
-              "Receiving calls",
-              current.target?.enabled ? "Enabled" : "Disabled",
+              "Receiving number enabled",
+              current.target?.enabled ? "Yes" : "No",
             ],
           ]}
         />
@@ -156,19 +175,13 @@ export function WhatsAppSetup() {
           ) : (
             <>
               <Stepper
-                active={
-                  !current.connected
-                    ? 0
-                    : pairing?.state === "completed"
-                      ? 2
-                      : 1
-                }
+                active={linking ? 0 : pairing?.state === "completed" ? 2 : 1}
                 size="sm"
               >
                 <Stepper.Step label="Link account" />
                 <Stepper.Step label="Pair your number" />
               </Stepper>
-              {!current.connected ? (
+              {linking ? (
                 <>
                   <Text>
                     Link the WhatsApp account VoxDock will use to call you. Your
@@ -209,6 +222,9 @@ export function WhatsAppSetup() {
                     </Alert>
                   ) : activePairing(pairing) ? (
                     <>
+                      {pairing?.error && (
+                        <Failure error={new ApiError(409, pairing.error)} />
+                      )}
                       {poll.error && (
                         <Failure
                           error={poll.error}
@@ -262,6 +278,7 @@ export function WhatsAppSetup() {
                             </Text>
                             <Button
                               loading={busy}
+                              disabled={!!pairing.error || !!poll.error}
                               onClick={() =>
                                 void act(
                                   `${pairingPath}/${encodeURIComponent(pairing.id)}/confirm`,
