@@ -35,7 +35,7 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
     ...options,
     credentials: "same-origin",
     headers: {
-      "Content-Type": "application/json",
+      ...(options?.body !== undefined ? { "Content-Type": "application/json" } : {}),
       ...(session && options?.method && options.method !== "GET"
         ? { "X-CSRF-Token": session.csrf_token }
         : {}),

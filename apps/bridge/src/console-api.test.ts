@@ -5,7 +5,7 @@ import { scryptSync } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
 import { parseConfig } from '@voxdock/config';
 import { CallStore } from '@voxdock/core';
-import { createBridgeServer } from './server.js';
+import { createBridgeServer, type BridgeServerOptions } from './server.js';
 
 const token = 'control-test-token-with-at-least-32-characters';
 const password = 'console test password';
@@ -14,11 +14,11 @@ const passwordHash = `scrypt$16384$8$1$${salt}$${scryptSync(password, Buffer.fro
 const origin = 'https://console.example.test';
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const stop of cleanups.splice(0)) await stop(); vi.useRealTimers(); });
-async function setup() {
+async function setup(extra: Partial<BridgeServerOptions> = {}) {
   const assetsDirectory = mkdtempSync(join(tmpdir(), 'voxdock-console-'));
   writeFileSync(join(assetsDirectory, 'index.html'), '<!doctype html><title>VoxDock</title>');
   const store = new CallStore(':memory:');
-  const app = await createBridgeServer({ store, config: parseConfig({}), controlToken: token, console: { passwordHash, publicOrigin: origin, assetsDirectory } });
+  const app = await createBridgeServer({ store, config: parseConfig({}), controlToken: token, console: { passwordHash, publicOrigin: origin, assetsDirectory }, ...extra });
   cleanups.push(async () => { await app.close(); store.close(); rmSync(assetsDirectory, { recursive: true }); });
   const login = async () => {
     const response = await app.inject({ method: 'POST', url: '/admin/v1/session', headers: { origin }, payload: { password } });
@@ -96,4 +96,27 @@ it('bounds simultaneous expensive password checks', async () => {
   const { app } = await setup();
   const responses = await Promise.all([1, 2].map(() => app.inject({ method: 'POST', url: '/admin/v1/session', headers: { origin }, payload: { password } })));
   expect(responses.map(response => response.statusCode).sort()).toEqual([200, 429]);
+});
+
+it('keeps recovered uncertain calls visible when the runtime has no active coordinator', async () => {
+  const onEnd = vi.fn(async () => {});
+  const { app, store, login } = await setup({ onEnd });
+  const call = store.createCall('operator', 'recovered', {
+    target_id: 'owner', context_ref: 'context', correlation_ref: 'request',
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+  }, { enabled: true, allowedTargets: new Set(['owner']), maxTtlSeconds: 300 }).call;
+  store.transition(call.call_id, 'connected', { provider_call_ref: 'provider:recovered' });
+  store.recover();
+  const { cookie, csrf } = await login();
+  for (const [prefix, headers] of [
+    ['/admin/v1', { cookie, origin, 'x-csrf-token': csrf }],
+    ['/v1', { authorization: `Bearer ${token}` }],
+  ] as const) {
+    const response = await app.inject({ method: 'POST', url: `${prefix}/calls/${call.call_id}/end`, headers });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ error: 'reconciliation_required' });
+  }
+  expect(onEnd).not.toHaveBeenCalled();
+  expect(store.consoleCall(call.call_id).summary).toMatchObject({ can_end: false, call: { state: 'uncertain' } });
+  expect(store.consoleOverview({ days: 1, timeZone: 'UTC', dailySeconds: 100 }).attention_calls).toHaveLength(1);
 });

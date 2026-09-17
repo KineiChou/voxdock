@@ -1,5 +1,24 @@
 # Engineering record
 
+## Operator console, 2026-09-17
+
+The bridge had durable records but no operator UI. A Mantine/React/Vite console now renders backend projections for call trends, usage reservations, filtered records, transcripts, delegation results and applied configuration. Browser and CLI controls share server services. File-managed settings and platform login remain separate; no browser-only call coordinator or fake pairing controls were added.
+
+Schema 2 preserves command identities and adds historical channel/source snapshots, durable connection facts and transcript cursors. Migration leaves unevidenced historical data unknown. Reports count current delegation revisions once, exclude active calls from observed terminal connection rates, and keep settled/reserved/unknown Live seconds separate. Calendar-window tests cover local midnight and daylight-saving transitions; mismatched ledger timezones fail explicitly.
+
+Review found and corrected the following defects before delivery:
+
+| Symptom and impact | Cause and correction | Evidence |
+| --- | --- | --- |
+| Sign out returned 400, leaving the administrator logged in | The fetch wrapper set a JSON Content-Type for an empty DELETE. Send the header only when a body exists | Fastify reproduction; real built-service logout and browser return to the login screen |
+| Offline browser state could outlive its known session deadline | Cache cleanup depended only on receiving 401. Clear session/cache at the server expiry and recheck on focus/visibility | Server expiry test; client deadline handling reviewed |
+| An active call appeared Disabled in the header | The UI inferred status from accepting_calls. The backend now supplies status and control eligibility | Shared settings projection and desktop/mobile review |
+| Ending a recovered uncertain call could hide it from Needs review indefinitely | The route changed uncertain to ending although the runtime might have no matching coordinator. Reject that transition with reconciliation_required and preserve visibility | Regression exercises both admin and legacy endpoints with an absent active coordinator |
+| Transcript pages above 100 failed despite a 200-fragment contract | The shared pagination bound had the call-list limit. Use the transcript-specific maximum | 201-fragment boundary test |
+| The mobile header wrapped below its fixed height | Desktop account text competed with navigation width. Keep the header row unwrapped and hide the redundant mobile label | Actual 390px browser check |
+
+The integrated checks include TypeScript, a production frontend build, the existing account-free suites, and the real CLI/service smoke with console assets, login, overview and revoked-cookie replay. Browser checks use synthetic records at desktop and 390px widths; filtering, audit tabs, navigation and logout were exercised without a browser runtime error. These checks do not establish phone audio, platform pairing or an eight-hour real-time browser endurance run.
+
 This records reproducible implementation defects and their fixes. Product brainstorming and private account information are not part of this repository. Development used parallel coding agents under the maintainer's direction, with a coordinating agent reviewing, testing and integrating changes. Maintainer acceptance and live-account validation remain separate. No real-call or business-performance claim follows from simulated tests.
 
 | Date | Defect and cause | Fix and evidence |

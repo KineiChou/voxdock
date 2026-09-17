@@ -147,6 +147,7 @@ export class ConsoleQueries {
       | undefined;
     return {
       call,
+      can_end: ['requested', 'dialing', 'ringing', 'connected'].includes(call.state),
       channel: row.channel,
       actor_kind: row.actor_kind,
       connected: row.connected === null ? null : Boolean(row.connected),

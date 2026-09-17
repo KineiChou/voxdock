@@ -10,6 +10,8 @@ body {
   background: #f5f7f6;
 }
 .page {
+  min-width: 0;
+  overflow-wrap: anywhere;
   max-width: 1480px;
   margin: auto;
 }

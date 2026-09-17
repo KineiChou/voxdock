@@ -198,7 +198,7 @@ export function redactAudit(input: unknown) {
         ? null
         : {
             seconds: number(usage.seconds),
-            status: known(usage.status, ["reserved", "unknown", "settled"]),
+            status: known(usage.status, ["reserved", "incomplete", "settled"]),
           },
   };
 }

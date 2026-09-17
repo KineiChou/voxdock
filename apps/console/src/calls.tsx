@@ -232,6 +232,7 @@ export function CallDetail() {
             <Button
               color="red"
               variant="light"
+              disabled={!data?.summary.can_end}
               onClick={() => {
                 setError(null);
                 setEndOpen(true);
@@ -277,7 +278,7 @@ export function CallDetail() {
                       ? date(data.summary.ended_at)
                       : "Not recorded",
                   ],
-                  ["Duration", seconds(data.summary.duration_seconds)],
+                  ["Recorded call interval", seconds(data.summary.duration_seconds)],
                   [
                     "Audio",
                     data.summary.call.audio_ready ? "Ready" : "Not ready",

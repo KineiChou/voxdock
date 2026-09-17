@@ -143,7 +143,7 @@ export function Settings() {
                   rows={[
                     ["Model", data.live.model],
                     ["Voice", data.live.voice],
-                    ["Language", data.live.language],
+                    ["Preferred language", data.live.language],
                     [
                       "Live credential",
                       data.live.credential_configured
@@ -168,7 +168,7 @@ export function Settings() {
                     `${data.records.transcript_retention_days} days`,
                   ],
                   [
-                    "Call metadata retention",
+                    "Detailed history retention",
                     `${data.records.metadata_retention_days} days`,
                   ],
                 ]}

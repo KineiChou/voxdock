@@ -45,7 +45,7 @@ export function registerConsoleRoutes(app: FastifyInstance, prefix: string, opti
   app.get<{ Params: { call_id: string }; Querystring: { format?: 'json' | 'html'; redact?: 'true' | 'false' } }>(`${prefix}/calls/:call_id/export`, {
     schema: { params, querystring: Type.Object({ format: Type.Optional(Type.Union([Type.Literal('json'), Type.Literal('html')])), redact: Type.Optional(Type.Union([Type.Literal('true'), Type.Literal('false')])) }, strict) },
   }, async (request, reply) => {
-    const record = options.store.getRecord(request.params.call_id);
+    const record = { schema_version: 1, mode: options.mode ?? 'native', ...options.store.getRecord(request.params.call_id) };
     const output = request.query.redact === 'false' ? record : redactAudit(record);
     const format = request.query.format ?? 'json';
     reply.header('content-disposition', `attachment; filename="voxdock-call.${format}"`);

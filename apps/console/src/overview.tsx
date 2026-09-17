@@ -42,7 +42,10 @@ export function Overview() {
         action={settings.data && <CallingControl settings={settings.data} />}
       />
       <Group justify="space-between" mb="lg">
-        <Text fw={600}>Activity at a glance</Text>
+        <div>
+          <Text fw={600}>Activity at a glance</Text>
+          {data && <Text size="xs" c="dimmed">Updated {new Date(data.generated_at).toLocaleTimeString()}</Text>}
+        </div>
         <SegmentedControl
           value={days}
           onChange={setDays}
@@ -111,6 +114,7 @@ export function Overview() {
                   withLegend
                   tickLine="none"
                   gridAxis="y"
+                  yAxisProps={{ allowDecimals: false }}
                 />
               </Panel>
               <Panel title="By channel">

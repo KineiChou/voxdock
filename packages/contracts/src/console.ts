@@ -22,6 +22,7 @@ export interface ConsoleCallSummary {
   ended_at: string | null;
   duration_seconds: number | null;
   had_uncertain_state: boolean | null;
+  can_end: boolean;
   usage: ConsoleUsage | null;
   delegations: DelegationCounts;
   transcript_availability: TranscriptAvailability;
@@ -109,6 +110,8 @@ export interface ConsoleSettings {
     configured_enabled: boolean;
     paused: boolean;
     accepting_calls: boolean;
+    status: 'ready' | 'paused' | 'disabled' | 'busy' | 'not_ready';
+    can_pause: boolean;
     can_resume: boolean;
     resume_blocked_reason: string | null;
     max_call_seconds: number;

@@ -1,12 +1,15 @@
 # Engineering decisions
 
-Current decisions and evidence boundaries as of 2026-09-16. These describe the implementation, not production validation.
+Current decisions and evidence boundaries as of 2026-09-17. These describe the implementation, not production validation.
 
 | Decision | Reason and consequence |
 | --- | --- |
 | One operator/backend and one active call | A single durable admission ledger keeps call identity, uncertain outcomes and resource limits explicit. No multitenant or distributed-worker claim. |
 | TypeScript/Node 24, source execution with tsx | Control, runtime and adapter boundaries share types. `tsc --noEmit` checks source; it does not create a deployable JavaScript bundle. |
 | SQLite on a local filesystem | State changes and event outbox share transactions. Run one bridge writer; preserve WAL consistency during backup. |
+| Same-origin React/Vite console using Mantine | Reuse existing UI primitives and charts; Fastify owns metrics, filtering, authentication and controls. CLI and browser invoke shared backend services. File-managed configuration remains read-only. |
+| Separate web password and revocable cookie sessions | The browser never stores the broad control bearer token. Exact-origin and CSRF checks protect management mutations. No multi-user or managed-platform-login claim. |
+| Durable call facts with evidence-only historical migration | Event retention must not turn known connections into missing data, nor should current configuration invent a historical platform. Original control schemas and command identities remain stable. |
 | Primary GPT-Live-1 WebSocket with client delegation | The application keeps business permissions and execution outside the voice model. Live audio is continuous; Realtime commit/voice-turn commands are not substituted. |
 | teleproto plus NTgCalls | The deprecated GramJS package directs users toward teleproto. NTgCalls supplies native media; its published prerelease ABI requires explicit byte conversion verified by account-free checks. |
 | Separate WaCalls process and small PCM patch | Reuse the pinned upstream protocol core. Authenticate call-bound media while keeping the upstream REST interface private. This is not an upstream-provided PCM WebSocket API. |

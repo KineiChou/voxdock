@@ -113,6 +113,7 @@ export async function createBridgeServer(options: BridgeServerOptions) {
   }, async request => getCall(request.params.call_id));
   const endCall = (id: string, reply: FastifyReply) => {
     const call = getCall(id);
+    if (call.state === 'uncertain') throw new DomainError('reconciliation_required', 409);
     if (call.state === 'ended' || call.state === 'ending') return call;
     if (call.state === 'requested') return store.transition(call.call_id, 'ended', { reason: 'cancelled_before_dial' });
     if (!options.onEnd) return reply.code(409).send({ error: 'reconciliation_required' });

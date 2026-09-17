@@ -27,6 +27,8 @@ export function createConsoleService(options: BridgeServerOptions) {
         calling: {
           configured_enabled: config.calling.enabled, paused,
           accepting_calls: config.calling.enabled && !paused && reason === null,
+          status: !config.calling.enabled ? 'disabled' : paused ? 'paused' : reason === 'active_or_uncertain_call' ? 'busy' : reason ? 'not_ready' : 'ready',
+          can_pause: config.calling.enabled && !paused,
           can_resume: reason === null, resume_blocked_reason: reason,
           max_call_seconds: config.calling.max_call_seconds,
           daily_live_seconds: config.calling.daily_live_seconds,

@@ -108,6 +108,19 @@ function App() {
     setSession(value);
   };
   useEffect(() => {
+    if (!session) return;
+    const remaining = () => Date.parse(session.expires_at) - Date.now();
+    const expire = () => { if (remaining() <= 0) clear(); };
+    const timer = setTimeout(expire, Math.max(0, remaining()));
+    window.addEventListener('focus', expire);
+    document.addEventListener('visibilitychange', expire);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('focus', expire);
+      document.removeEventListener('visibilitychange', expire);
+    };
+  }, [session]);
+  useEffect(() => {
     let active = true;
     api<ConsoleSession>("/session")
       .then((value) => {
@@ -205,6 +218,8 @@ function Login({
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="current-password"
                 required
+                minLength={12}
+                maxLength={256}
                 autoFocus
               />
               {error && <Failure error={error} />}
@@ -241,8 +256,8 @@ function Shell({ onLogout }: { onLogout: () => Promise<void> }) {
       padding={{ base: 18, sm: 30, lg: 40 }}
     >
       <AppShell.Header className="topbar">
-        <Group justify="space-between" h="100%" px="lg">
-          <Group>
+        <Group justify="space-between" h="100%" px="lg" wrap="nowrap">
+          <Group wrap="nowrap">
             <Burger
               opened={opened}
               onClick={() => setOpened((v) => !v)}
@@ -260,9 +275,9 @@ function Shell({ onLogout }: { onLogout: () => Promise<void> }) {
               Console
             </Text>
           </Group>
-          <Group gap={9}>
+          <Group gap={9} wrap="nowrap">
             <span className="avatar">V</span>
-            <Text size="sm" fw={500}>
+            <Text size="sm" fw={500} visibleFrom="sm">
               Administrator
             </Text>
           </Group>

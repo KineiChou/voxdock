@@ -12,6 +12,7 @@ A self-hosted voice bridge for **Telegram**, **WhatsApp**, and **GPT-Live-1**. C
 - Fixed call targets, idempotent commands, bounded duration and no automatic redial.
 - Continuous audio through GPT-Live-1 with client-managed delegation.
 - SQLite call/event records, backend receipts and JSON/HTML audit exports with optional redacted summaries.
+- A mobile-friendly operator console: call trends, Live budget, filterable audit records, connection status and pause/resume controls.
 
 Your backend owns task execution, permissions, project routing and long-term memory. VoxDock carries the conversation and its evidence.
 
@@ -20,6 +21,7 @@ Your backend owns task execution, permissions, project routing and long-term mem
 | Area | Implemented | Validation boundary |
 | --- | --- | --- |
 | Control and records | HTTP contracts, durable admission, recovery and event outbox | Automated tests and a paused ARM64 deployment; real account operations unverified |
+| Operator console | Authenticated dashboard, server-filtered audits, connection/configuration status and CLI parity | Single operator; file-managed settings and platform pairing remain separate |
 | Telegram | MTProto/NTgCalls driver and Live runtime path | Fixtures and account-free native checks; handset calls unverified |
 | GPT-Live-1 | Primary WebSocket, PCM, transcripts, client delegation and finite close | Real 16 kHz session, phone greeting and one delegation; interruption and endurance remain unverified |
 | WhatsApp | WaCalls control/media, stored identity mapping and shared Live runtime | Two-minute outgoing conversation heard; normal handset termination and corrected incoming admission remain open |
@@ -37,6 +39,7 @@ git clone https://github.com/KineiChou/voxdock.git
 cd voxdock
 pnpm install --frozen-lockfile
 pnpm typecheck
+pnpm build
 pnpm test
 pnpm voxdock init ./local
 pnpm voxdock doctor --config ./local/voxdock.config.json
@@ -44,6 +47,8 @@ pnpm voxdock serve --config ./local/voxdock.config.json
 ```
 
 Initialization disables calling and both channels. In another terminal, inspect the service with `pnpm voxdock status --config ./local/voxdock.config.json`. Provisioning a platform session and enabling calling are separate steps in [installation](docs/install.md). `typecheck` validates source; the application runs TypeScript through `tsx`.
+
+For a browser interface, follow [console setup](docs/console.md#enable-the-console) and open `/console/`. The dashboard reads real server records; it is also available through `pnpm voxdock overview`.
 
 ## How it fits
 
@@ -61,6 +66,7 @@ Telegram uses teleproto and NTgCalls. WhatsApp uses a separately built WaCalls p
 ## Integrate and operate
 
 - [Install, configure and run](docs/install.md)
+- [Operator console and dashboard](docs/console.md)
 - [Control API and JSON Schemas](docs/api.md)
 - [Backend contract and independent example](docs/backend.md)
 - [Platform adapters and native evidence](docs/platforms.md)
