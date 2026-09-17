@@ -105,8 +105,8 @@ it('clears unavailable and expired QR data and clears transient errors on recove
 
 it('rejects stale and Telegram refresh and applies strict no-store HTTP contracts', async () => {
   const { service } = fixture(vi.fn<typeof fetch>());
-  const flow = await service.startTelegram('+12345678901'); await tick();
-  expect((await service.flow(flow.id)).state).toBe('code_required');
+  const flow = await service.startTelegram('+12345678901');
+  await vi.waitFor(async () => expect((await service.flow(flow.id)).state).toBe('code_required'));
   const app = Fastify({ ajv: { customOptions: { removeAdditional: false, coerceTypes: false } } });
   registerConnectionRoutes(app, '/admin/v1', service);
   const url = `/admin/v1/connections/flows/${flow.id}/refresh`;

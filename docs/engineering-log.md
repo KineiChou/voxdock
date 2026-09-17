@@ -1,5 +1,9 @@
 # Engineering record
 
+## Awaiting Telegram fixture readiness, 2026-09-17
+
+The ARM64 candidate build exposed an intermittent failure in the QR refresh contract test: the fake Telegram flow was still `starting` when the test expected `code_required`. The test yielded one zero-delay timer even though session-directory `mkdir` and `chmod` run asynchronously before the authorization prompt. It now waits for the observed challenge with Vitest's bounded `waitFor`; product timing and refresh rejection rules are unchanged. This test-only correction is separate from the Settings implementation. The failed candidate was not deployed.
+
 ## Grouped Settings editing and activity chart alignment, 2026-09-17
 
 Settings previously showed all controls as one editable form, making the current configuration hard to scan. It now starts with five summary groups and opens a focused Mantine dialog only after Configure. Each dialog reads the latest revision; cancel discards its state, failed saves retain the draft, and successful saves refresh the summaries. Review identified that a failed follow-up GET could leave a summary stale after a successful PUT: seed the cache from the saved response before refreshing. Existing server validation, admission holds, credentials and revision checks remain authoritative. Voice and language suggestions are served by one authenticated API/CLI catalog rather than embedded in the browser; custom values and existing unlisted settings remain usable.
