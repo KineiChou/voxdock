@@ -1,10 +1,12 @@
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Channel, CallStatus, DelegationResult } from "@voxdock/contracts";
 import type { BridgeConfig } from "@voxdock/config";
 import { CallStore } from "@voxdock/core";
 import { createBridgeServer } from "./server.js";
-import { loadConfig, controlToken, CliError } from "./cli-files.js";
+import { loadConfig, controlToken, readPrivateText, CliError } from "./cli-files.js";
+import { isConsolePasswordHash } from "./console-password.js";
 import { acquireProcessLock } from "./cli-lock.js";
 export interface Runtime {
   readyChannels: ReadonlySet<Channel>;
@@ -50,6 +52,10 @@ export async function startService(
 ) {
   const { config, directory } = loadConfig(filename);
   const token = controlToken(config, directory);
+  const passwordHash = config.console.enabled
+    ? readPrivateText(resolve(directory, config.console.password_hash_file!))
+    : undefined;
+  if (passwordHash && !isConsolePasswordHash(passwordHash)) throw new CliError("invalid_console_password_hash");
   const data = resolve(directory, config.service.data_dir);
   mkdirSync(data, { recursive: true, mode: 0o700 });
   const release = acquireProcessLock(data);
@@ -94,6 +100,11 @@ export async function startService(
       onCallCreated: (call) => runtime!.onCallCreated(call),
       onEnd: (call) => runtime!.onEnd(call),
       onResult: (result) => runtime!.onResult(result),
+      ...(passwordHash ? { console: {
+        passwordHash,
+        publicOrigin: config.console.public_origin!,
+        assetsDirectory: fileURLToPath(new URL('../../console/dist', import.meta.url)),
+      } } : {}),
     });
     const separator = config.service.listen.lastIndexOf(":");
     const host = config.service.listen

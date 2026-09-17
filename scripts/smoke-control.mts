@@ -12,6 +12,7 @@ const children = new Set<ChildProcess>();
 const outputs: string[] = [];
 let temporary: string | undefined;
 let token = "";
+const consolePassword = "local-smoke-console-password";
 function check(condition: unknown, label: string): asserts condition {
   if (!condition) throw new Error(label);
 }
@@ -155,6 +156,7 @@ try {
     service: { listen: string };
     calling: { enabled: boolean };
     channels: Record<string, { enabled: boolean }>;
+    console: { enabled: boolean; public_origin?: string; password_hash_file?: string };
   };
   check(
     !config.calling.enabled &&
@@ -162,7 +164,13 @@ try {
     "initialization_enabled_calling",
   );
   const port = await freePort();
+  const origin = `http://127.0.0.1:${port}`;
   config.service.listen = `127.0.0.1:${port}`;
+  const passwordFile = join(instance, "password-input");
+  await writeFile(passwordFile, consolePassword + "\n", { mode: 0o600 });
+  await command(["console", "password", "--password-file", passwordFile, "--out", join(instance, "admin.hash")]);
+  await rm(passwordFile);
+  config.console = { enabled: true, public_origin: origin, password_hash_file: "./admin.hash" };
   await writeFile(configFile, JSON.stringify(config, null, 2) + "\n", {
     mode: 0o600,
   });
@@ -174,8 +182,28 @@ try {
     doctor.checks.every((check) => check.status !== "fail"),
     "offline_doctor_failed",
   );
-  const origin = `http://127.0.0.1:${port}`;
   const service = await start(configFile, origin);
+  const page = await request(`${origin}/console/`);
+  check(page.status === 200 && (await page.text()).includes('<div id="root">'), "console_assets_missing");
+  check((await request(`${origin}/admin/v1/overview`)).status === 401, "console_authentication_missing");
+  const login = await fetch(`${origin}/admin/v1/session`, {
+    method: "POST", headers: { origin, "content-type": "application/json" },
+    body: JSON.stringify({ password: consolePassword }), signal: AbortSignal.timeout(3000),
+  });
+  check(login.status === 200, "console_login_failed");
+  const cookie = login.headers.get("set-cookie")?.split(";")[0];
+  const session = await login.json() as { csrf_token: string };
+  check(cookie && session.csrf_token, "console_session_missing");
+  const overview = await fetch(`${origin}/admin/v1/overview?days=7`, {
+    headers: { cookie }, signal: AbortSignal.timeout(3000),
+  });
+  check(overview.status === 200 && (await overview.json() as { totals: { calls: number } }).totals.calls === 0, "console_overview_failed");
+  const logout = await fetch(`${origin}/admin/v1/session`, {
+    method: "DELETE", headers: { cookie, origin, "x-csrf-token": session.csrf_token }, signal: AbortSignal.timeout(3000),
+  });
+  check(logout.status === 204, "console_logout_failed");
+  const replay = await fetch(`${origin}/admin/v1/session`, { headers: { cookie }, signal: AbortSignal.timeout(3000) });
+  check(replay.status === 401, "console_logout_replay_allowed");
   check(
     (await request(`${origin}/v1/capabilities`)).status === 401,
     "unauthorized_api_allowed",
@@ -221,11 +249,11 @@ try {
   );
   await stop(restarted);
   check(
-    outputs.every((output) => !output.includes(token)),
+    outputs.every((output) => !output.includes(token) && !output.includes(consolePassword)),
     "secret_present_in_child_output",
   );
   process.stdout.write(
-    "Control smoke passed: init, offline doctor, disabled runtime, authentication, process lock, pause, shutdown and restart.\n",
+    "Control smoke passed: init, offline doctor, disabled runtime, console assets/login/overview/logout, bearer authentication, process lock, pause, shutdown and restart.\n",
   );
 } catch (error) {
   const label =

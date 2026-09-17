@@ -6,6 +6,8 @@ import {
   DelegationSchema,
   DelegationResultSchema,
   TranscriptFragmentSchema,
+  type Channel,
+  type ConsoleCallQuery,
   type CallRequest,
   type CallStatus,
   type CallState,
@@ -15,15 +17,9 @@ import {
   type TranscriptFragment,
 } from "@voxdock/contracts";
 import { openDatabase } from "./database.js";
-export class DomainError extends Error {
-  constructor(
-    public readonly code: string,
-    public readonly statusCode: number,
-  ) {
-    super(code);
-    this.name = "DomainError";
-  }
-}
+import { DomainError } from "./domain-error.js";
+export { DomainError } from "./domain-error.js";
+import { ConsoleQueries } from "./console.js";
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (value && typeof value === "object")
@@ -63,6 +59,7 @@ export interface CreateCallOptions {
   allowedTargets: Set<string>;
   maxTtlSeconds: number;
   direction?: "inbound" | "outbound";
+  channel?: Channel;
 }
 export class CallStore {
   private readonly db: Database.Database;
@@ -75,6 +72,18 @@ export class CallStore {
     this.db = openDatabase(filename);
     this.now = options.now ?? (() => new Date());
     this.persistTranscripts = options.persistTranscripts ?? true;
+  }
+  consoleCalls(query: ConsoleCallQuery = {}) {
+    return new ConsoleQueries(this.db, this.now).calls(query);
+  }
+  consoleOverview(options: { days: 1 | 7 | 30; timeZone: string; dailySeconds: number }) {
+    return new ConsoleQueries(this.db, this.now).overview(options);
+  }
+  consoleCall(id: string) {
+    return new ConsoleQueries(this.db, this.now).call(id);
+  }
+  consoleTranscripts(id: string, options: { cursor?: string; limit?: number } = {}) {
+    return new ConsoleQueries(this.db, this.now).transcripts(id, options);
   }
   private captureTranscripts(callId: string): boolean {
     const row = this.db
@@ -157,6 +166,8 @@ export class CallStore {
       throw new DomainError("invalid_idempotency_key", 400);
     if (!Value.Check(CallRequestSchema, request))
       throw new DomainError("invalid_call_request", 400);
+    if (options.channel !== undefined && !["telegram", "whatsapp"].includes(options.channel))
+      throw new DomainError("invalid_channel", 400);
     const digest = hash({
       request,
       direction: options.direction ?? "outbound",
@@ -218,6 +229,8 @@ export class CallStore {
         this.db
           .prepare("INSERT INTO commands VALUES (?,?,?,?)")
           .run(clientId, key, digest, call.call_id);
+        this.db.prepare("INSERT INTO call_facts (call_id,created_at,channel,actor_kind,connected,had_uncertain_state) VALUES (?,?,?,?,0,0)")
+          .run(call.call_id, call.created_at, options.channel ?? null, call.direction === "inbound" ? "incoming" : "operator");
         this.emit(call);
         return { call, replayed: false };
       })
@@ -254,6 +267,12 @@ export class CallStore {
         this.db
           .prepare("UPDATE calls SET state=?,body=? WHERE id=?")
           .run(state, JSON.stringify(call), id);
+        this.db.prepare(`UPDATE call_facts SET
+          connected=CASE WHEN ?='connected' THEN 1 ELSE connected END,
+          connected_at=CASE WHEN ? THEN COALESCE(connected_at,?) ELSE connected_at END,
+          ended_at=CASE WHEN ?='ended' THEN ? ELSE ended_at END,
+          had_uncertain_state=CASE WHEN ?='uncertain' THEN 1 ELSE had_uncertain_state END WHERE call_id=?`)
+          .run(state,state === "connected" && previous.state !== "connected" ? 1 : 0,call.updated_at,state,call.updated_at,state,id);
         this.emit(call);
         return call;
       })
@@ -516,6 +535,7 @@ export class CallStore {
             JSON.stringify(fragment),
             this.now().toISOString(),
           );
+        this.db.prepare("INSERT OR IGNORE INTO transcript_cursors(call_id,id) VALUES (?,?)").run(callId,fragment.id);
         this.db
           .prepare(
             "UPDATE recording SET availability='available' WHERE call_id=?",

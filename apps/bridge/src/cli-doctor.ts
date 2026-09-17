@@ -2,7 +2,8 @@ import { accessSync, constants, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import type { BridgeConfig } from "@voxdock/config";
-import { controlToken } from "./cli-files.js";
+import { controlToken, readPrivateText } from "./cli-files.js";
+import { isConsolePasswordHash } from "./console-password.js";
 export interface Check {
   name: string;
   status: "pass" | "fail" | "unverified";
@@ -46,6 +47,15 @@ export function doctor(
       checks.push({ name, status: "pass" });
     } catch {
       checks.push({ name, status: "fail" });
+    }
+  }
+  if (config.console.enabled) {
+    file("console_password_file", config.console.password_hash_file);
+    try {
+      const hash = readPrivateText(resolve(directory, config.console.password_hash_file!));
+      checks.push({ name: "console_password_hash", status: isConsolePasswordHash(hash) ? "pass" : "fail" });
+    } catch {
+      checks.push({ name: "console_password_hash", status: "fail" });
     }
   }
   if (config.channels.telegram.enabled) {
