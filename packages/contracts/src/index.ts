@@ -166,3 +166,4 @@ export const BackendContextSchema = Type.Object(
 export type BackendContext = Static<typeof BackendContextSchema>;
 
 export type * from './console-connections.js';
+export type * from './console-pairing.js';

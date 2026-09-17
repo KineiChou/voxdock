@@ -67,6 +67,7 @@ export class CallStore {
   private readonly db: Database.Database;
   private readonly now: () => Date;
   private persistTranscripts: boolean;
+  private readonly admissionHolds = new Set<symbol>();
   constructor(
     filename: string,
     options: { now?: () => Date; persistTranscripts?: boolean } = {},
@@ -106,6 +107,11 @@ export class CallStore {
       row?.availability !== "expired"
     );
   }
+  suspendAdmission(): () => void {
+    const hold = Symbol();
+    this.admissionHolds.add(hold);
+    return () => { this.admissionHolds.delete(hold); };
+  }
   setPaused(paused: boolean): void {
     this.db
       .prepare(
@@ -117,7 +123,7 @@ export class CallStore {
     const row = this.db
       .prepare("SELECT value FROM metadata WHERE key='paused'")
       .get() as { value: string } | undefined;
-    return row ? row.value === "true" : defaultPaused;
+    return this.admissionHolds.size > 0 || (row ? row.value === "true" : defaultPaused);
   }
   getRecord(callId: string) {
     const call = this.getCall(callId);

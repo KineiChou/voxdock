@@ -1,5 +1,21 @@
 # Engineering record
 
+## Guided WhatsApp setup and continuous availability, 2026-09-17
+
+Connections now uses a two-step flow: link the server account with the controlled QR flow, then verify a separate receiving account by a random message code or an incoming call. The server chooses internal application references, preserves existing target/principal identities and commits only an explicitly confirmed provider-observed candidate. This avoids asking operators to invent opaque IDs. The observer never answers verification calls or sends messages; normal runtime ownership resumes after confirmed cleanup. Telegram retains its documented numeric-ID fallback.
+
+The homepage now displays status without start/stop controls. Configuration and pairing use temporary admission holds, released automatically on success or confirmed rollback. Explicit maintenance remains in Settings and persists across changes; unknown cleanup persists a recovery pause. Readiness and initial credentials still govern admission. This does not add automatic reconstruction of a disconnected channel.
+
+| Defect and impact | Cause and correction | Evidence |
+| --- | --- | --- |
+| Saving settings or finishing pairing left an otherwise configured service paused | Management reused the durable maintenance flag. Give each operation its own in-memory admission hold and preserve the operator's existing maintenance state | Runtime/store tests cover success, rollback, explicit maintenance, unsafe cleanup and reopen |
+| Account-status polling could advance the wizard before QR authorization released its runtime lease | The UI used account connectivity as the QR flow's terminal state. Keep that flow mounted until it reports connected | Browser QR-to-target transition and code review; no real account pairing claimed |
+| Valid ordinary WhatsApp text would be rejected during code verification | The pinned sender adds MessageContextInfo.MessageSecret; plain text can also use ExtendedTextMessage. Allow those transport/text forms while rejecting quotes, forwarding, history and media. Match the provider's second-resolution timestamp boundary | Pinned source inspection and Go tests, including race checks; handset delivery remains unverified |
+| Cancellation failures or observer-read errors were hidden by a successful HTTP status | Inspect the returned flow state/error, retain the dialog on cleanup failure, and disable candidate confirmation while observation is unhealthy | UI review against the backend contract |
+| One shutdown timeout could skip subsequent cleanup; early closure could suppress a required recovery pause | Close admission before independently draining management and runtime cleanup, preserve unknown state before database close, and detach late callbacks from storage | Safe/unsafe pairing shutdown and delayed factory regression tests |
+
+TypeScript checks, production build, 206 account-free tests and the real CLI/service smoke passed. CLI coverage includes setup, Telegram target and both WhatsApp verification methods with strict request mapping and no blind retries. The pinned WaCalls source applied all three patches and passed `go test -race ./cmd/server ./internal/voip/call`. Public handset QR, verification messages/calls, and normal phone-call termination remain separate acceptance gates.
+
 ## Console management and conversation display, 2026-09-17
 
 Settings and Connections previously exposed status only, so an operator could not configure or pair accounts from the console. Application settings now use a private revisioned store and one shared API/CLI service. Deployment infrastructure remains file-owned. Save/apply and pairing serialize with admission, require an idle ledger, and pause new calls. Form drafts remain independent of polling. Revision checks prevent stale overwrites; failed replacement retains the prior committed configuration and attempts rollback. Uncertain runtime cleanup blocks further replacement.

@@ -98,8 +98,8 @@ export function useConfigurationForm(initial: ConsoleConfigurationView) {
         {error && <Failure error={error} />}
         {saved && (
           <Alert color="teal">
-            Settings saved and applied. Calling is paused; resume it when you
-            are ready.
+            Settings saved and applied. Service availability will update
+            automatically.
           </Alert>
         )}
         <Group>

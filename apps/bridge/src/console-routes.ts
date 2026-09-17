@@ -3,6 +3,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { RefSchema, ConsoleConfigurationUpdateSchema, type ConsoleConfigurationUpdate, type ConsoleCallQuery } from '@voxdock/contracts';
 import { DomainError } from '@voxdock/core';
 import { registerConnectionRoutes } from './connection-routes.js';
+import { registerTargetPairingRoutes } from './target-pairing-routes.js';
+import { saveTelegramTarget } from './connection-targets.js';
 import type { BridgeServerOptions } from './server.js';
 import { createConsoleService } from './console-service.js';
 import { redactAudit, renderAudit } from './cli-api.js';
@@ -20,6 +22,13 @@ export function registerConsoleRoutes(app: FastifyInstance, prefix: string, opti
   endCall: (id: string, reply: FastifyReply) => unknown) {
   const service = createConsoleService(options);
   if (options.connections) registerConnectionRoutes(app, prefix, options.connections);
+  if (options.targetPairing) registerTargetPairingRoutes(app, prefix, options.targetPairing);
+  app.post<{ Body: { peer_id: string; enabled: boolean } }>(`${prefix}/connections/telegram/target`, {
+    schema: { body: Type.Object({ peer_id: Type.String({ pattern: '^[1-9][0-9]{0,18}$' }), enabled: Type.Boolean() }, strict) },
+  }, request => {
+    if (!options.management) throw new DomainError('configuration_unavailable', 503);
+    return saveTelegramTarget(options.management, request.body);
+  });
   app.get(`${prefix}/settings`, async () => service.settings());
   app.get(`${prefix}/control/status`, async () => ({ calling: service.settings().calling }));
   app.get(`${prefix}/settings/configuration`, async () => {

@@ -44,13 +44,13 @@ export function CallingControl({ settings }: { settings: Pick<ConsoleSettings, '
             setAction(settings.calling.paused ? "resume" : "pause");
           }}
         >
-          {settings.calling.paused ? "Resume calling" : "Pause calling"}
+          {settings.calling.paused ? "End maintenance" : "Pause for maintenance"}
         </Button>
       </Group>
       {settings.calling.paused && settings.calling.resume_blocked_reason && (
         <Text size="sm" c="dimmed">
           {settings.calling.resume_blocked_reason === "management_busy"
-            ? "A settings or connection change is in progress. Calling can resume when it finishes."
+            ? "A settings or connection change is in progress. Service will recover automatically when it finishes."
             : settings.calling.resume_blocked_reason === "calling_disabled"
               ? "Calling is turned off in your configuration."
               : settings.calling.resume_blocked_reason ===
@@ -62,7 +62,7 @@ export function CallingControl({ settings }: { settings: Pick<ConsoleSettings, '
       <Modal
         opened={action !== null}
         onClose={() => !busy && setAction(null)}
-        title={action === "pause" ? "Pause calling?" : "Resume calling?"}
+        title={action === "pause" ? "Pause for maintenance?" : "End maintenance?"}
         centered
       >
         <Stack>
@@ -81,7 +81,7 @@ export function CallingControl({ settings }: { settings: Pick<ConsoleSettings, '
               Cancel
             </Button>
             <Button loading={busy} onClick={apply}>
-              {action === "pause" ? "Pause calling" : "Resume calling"}
+              {action === "pause" ? "Pause for maintenance" : "End maintenance"}
             </Button>
           </Group>
         </Stack>

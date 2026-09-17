@@ -4,10 +4,10 @@ VoxDock includes a responsive web console at `/console/`. It uses the same bridg
 
 ## Available views
 
-- **Overview:** last 1, 7 or 30 local calendar days; call counts, observed connection rate, settled Live time, delegation outcomes, daily trends, platform distribution, today's budget, active calls and calls requiring review.
+- **Overview:** last 1, 7 or 30 local calendar days; call counts, observed connection rate, settled Live time, delegation outcomes, daily trends, platform distribution, today's budget, active calls and calls requiring review. The homepage displays service status; configured calling stays available without a Start button.
 - **Calls:** server-filtered, cursor-paginated records; lifecycle events, latest delegation results, server-grouped conversation text and JSON/HTML export. An end request is followed by polling the recorded state; acceptance is not proof of termination.
-- **Connections:** account authentication and calling readiness, channel credentials, fixed targets, Telegram phone/code/two-step verification, and WhatsApp QR pairing. Pairing can be cancelled and accounts disconnected. An authenticated account can remain disabled for calls.
-- **Settings:** save and apply calling limits, Live voice/language/credentials, agent backend and retention; change administrator credentials and remote-management access. Pause/resume eligibility comes from the backend.
+- **Connections:** account authentication and calling readiness, Telegram credentials and phone/code/two-step verification, an advanced manual Telegram receiving account, and guided WhatsApp setup. WhatsApp setup links the calling account with a QR code, then verifies a separate receiving account by a message code or incoming call and explicit number confirmation. Pairing can be cancelled and accounts disconnected. An authenticated account can remain disabled for calls.
+- **Settings:** save and apply calling limits, Live voice/language/credentials, agent backend and retention; change administrator credentials and remote-management access. Explicit maintenance pause/end-maintenance controls live here, with eligibility supplied by the backend.
 
 Scoped Agent credentials and MCP remain separate work. The existing fixed-target `POST /v1/calls` and CLI `call` remain available for authorized integrations. Task routing and long-term memory stay in the business backend.
 
@@ -43,9 +43,9 @@ Remote instances require an exact HTTPS `public_origin`, without a path, query, 
 
 The deployment file owns the listener, public origin, trusted proxies, data paths, timezone and WhatsApp service endpoint/media credential. The managed configuration owns calling, Live, backend, retention, channel account settings and fixed targets. GET responses expose credential-presence flags only. Secret inputs are write-only replacements; leaving one blank retains the existing credential.
 
-Save and apply validates the complete configuration and expected revision, rejects active or uncertain calls, pauses new calls, and serializes runtime replacement with pairing operations. The managed revision commits only after the replacement runtime starts. A failed replacement attempts to restore the prior runtime and remains paused; an uncertain shutdown stays blocked. Resume explicitly after reviewing readiness. A revision conflict requires reloading saved settings and reviewing edits. Browser polling does not overwrite unsaved form values.
+Save and apply validates the complete configuration and expected revision, rejects active or uncertain calls, temporarily blocks new calls, and serializes runtime replacement with pairing operations. The managed revision commits only after the replacement runtime starts. Successful application or confirmed rollback releases that temporary block automatically; any existing maintenance pause is preserved. Uncertain cleanup persists a recovery pause and keeps further management blocked. A revision conflict requires reloading saved settings and reviewing edits. Browser polling does not overwrite unsaved form values.
 
-For Telegram, save the API ID/hash with the channel disabled, connect using the phone verification flow, then enable the channel and a fixed target. WhatsApp pairing requires a private WaCalls service built with the current controlled-session patch; rebuild the sidecar image when upgrading this feature. An older image without `/api/voxdock/sessions/...` cannot provide this pairing flow. Scan the displayed QR in WhatsApp Linked devices. Pairing, account authentication and call readiness are separate states; none establishes a successful phone call. Timeouts/cancellation are reported by the backend, and uncertain cleanup blocks further changes.
+For Telegram, save the API ID/hash with the channel disabled, connect using the phone verification flow, then enable the channel and save the receiving account's numeric Telegram user ID in Advanced setup. VoxDock assigns internal account and target references; WhatsApp message/call verification is not implemented for Telegram. WhatsApp pairing requires a private WaCalls service built with all three current controlled patches; rebuild the sidecar image when upgrading this feature. An older image without `/api/voxdock/sessions/...` cannot provide this pairing flow. Choose **Configure WhatsApp**, then scan the displayed QR in WhatsApp Linked devices using the account that will call you. If it is already connected, setup goes straight to pairing the receiving account. From your separate receiving account, send the displayed code to the linked number or use the incoming-call alternative. Review the detected number and select **Confirm this number**; the existing target stays unchanged until confirmation. Closing the setup dialog cancels an active attempt; leaving the page keeps it armed until its displayed expiry. Confirmation saves the target and enables its WhatsApp channel; calling readiness then updates automatically. Global calling, Live credentials and the agent backend must still be configured in Settings. Verification calls are rejected without answering or starting Live; a rejected verification call is expected. The bridge never sends a pairing message or places a pairing call on your behalf. Pairing, account authentication and call readiness are separate states; none establishes a successful phone call. Timeouts/cancellation are reported by the backend, and uncertain cleanup blocks further changes.
 
 The local Docker build includes the frontend. Leave `console.enabled` false to run headless. For frontend development, build once, run the bridge on loopback port 8787, set the console origin to `http://127.0.0.1:5173`, then run `pnpm --filter @voxdock/console dev`. Vite proxies `/admin` to the local bridge.
 
@@ -66,6 +66,12 @@ Authenticated browser calls use `/admin/v1`; operator CLI projections use `/v1/c
 | `PUT /settings/configuration` | Complete `{ expected_revision, settings, secrets? }`; validate and apply synchronously |
 | `POST /connections/telegram/login` | `{ phone }`, international format |
 | `POST /connections/whatsapp/connect` | `{}`; start QR pairing |
+| `GET /connections/whatsapp/setup` | Linked server number, existing receiving number and pairing availability |
+| `POST /connections/whatsapp/target-pairings` | `{ method: "message" \| "call" }`; start a three-minute verification window |
+| `GET /connections/whatsapp/target-pairings/{id}` | Expiry, challenge or observed candidate number |
+| `POST /connections/whatsapp/target-pairings/{id}/confirm` | `{ candidate_id }`; confirm server-observed evidence and commit the target |
+| `POST /connections/whatsapp/target-pairings/{id}/cancel` | `{}`; cancel without changing the saved target |
+| `POST /connections/telegram/target` | `{ peer_id, enabled }`; manual numeric receiving account |
 | `GET /connections/flows/{id}` | Current challenge or terminal state |
 | `POST /connections/flows/{id}/code`, `/password` | `{ code }` or `{ password }` |
 | `POST /connections/flows/{id}/cancel` | `{}`; cancel pairing |
@@ -93,9 +99,13 @@ pnpm voxdock configuration --config ./local/voxdock.config.json
 pnpm voxdock configuration --config ./local/voxdock.config.json --file ./local/configuration-update.json
 pnpm voxdock connection connect --channel telegram --input-file ./local/phone.json --config ./local/voxdock.config.json
 pnpm voxdock connection status --flow FLOW_ID --config ./local/voxdock.config.json
+pnpm voxdock connection setup --channel whatsapp --config ./local/voxdock.config.json
+pnpm voxdock target-pair start --method message --config ./local/voxdock.config.json
+pnpm voxdock target-pair status --flow FLOW_ID --config ./local/voxdock.config.json
+pnpm voxdock target-pair confirm --flow FLOW_ID --candidate CANDIDATE_ID --config ./local/voxdock.config.json
 ```
 
-The private update file contains the PUT body, including `expected_revision` and the complete `settings`; optional `secrets` contains only replacements. Pairing input files contain `{ "phone": "+..." }`, `{ "code": "..." }` or `{ "password": "..." }` as appropriate. `connection code|password|cancel --flow ID` and `connection disconnect --channel telegram|whatsapp` complete the lifecycle. Keep credential-bearing files private.
+The private update file contains the PUT body, including `expected_revision` and the complete `settings`; optional `secrets` contains only replacements. Pairing input files contain `{ "phone": "+..." }`, `{ "code": "..." }` or `{ "password": "..." }` as appropriate. `connection code|password|cancel --flow ID` and `connection disconnect --channel telegram|whatsapp` complete the lifecycle. `target-pair cancel --flow ID` cancels receiving-number verification. `connection target --channel telegram --input-file FILE` accepts `{ "peer_id": "123456789", "enabled": true }`. The browser and CLI confirm only an opaque candidate ID; they cannot supply an arbitrary phone number as evidence. Keep credential-bearing files and displayed verification codes private.
 
 Offline `resume` and `reconcile` retain their existing process-lock requirements. A console user cannot clear an uncertain outcome by clicking Resume.
 

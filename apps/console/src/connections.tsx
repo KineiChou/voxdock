@@ -1,9 +1,8 @@
-import { Group, SimpleGrid, Stack, Text } from "@mantine/core";
+import { SimpleGrid, Text } from "@mantine/core";
 import type { ConsoleConnections } from "../../../packages/contracts/src/console";
 import { useResource } from "./api";
 import {
   date,
-  Empty,
   Failure,
   Fields,
   label,
@@ -15,6 +14,7 @@ import {
 import type { ConsoleConfigurationView } from "../../../packages/contracts/src/console-configuration";
 import { ConnectionSettings } from "./connection-settings";
 import { ConnectionLogin } from "./connection-login";
+import { WhatsAppSetup } from "./whatsapp-setup";
 export function Connections() {
   const configuration = useResource<ConsoleConfigurationView>(
     "/settings/configuration",
@@ -43,7 +43,6 @@ export function Connections() {
                 >
                   <Fields
                     rows={[
-                      ["Account", channel.account_ref ?? "Not configured"],
                       ["Calling", channel.enabled ? "Enabled" : "Disabled"],
                       [
                         "Account connection",
@@ -55,45 +54,28 @@ export function Connections() {
                       ],
                     ]}
                   />
-                  <ConnectionLogin
-                    channel={channel.channel}
-                    authenticated={channel.authenticated}
-                  />
-                  <Text fw={600} size="sm" mt="xl" mb="sm">
-                    Call targets
-                  </Text>
-                  {!channel.targets.length ? (
-                    <Empty
-                      title="No targets configured"
-                      text="Configured call targets will appear here."
-                    />
+                  {channel.channel === "whatsapp" ? (
+                    <WhatsAppSetup />
                   ) : (
-                    <Stack gap="xs">
-                      {channel.targets.map((target) => (
-                        <div className="record-block" key={target.id}>
-                          <Group justify="space-between">
-                            <Text fw={600} size="sm">
-                              {target.id}
-                            </Text>
-                            <Status
-                              value={target.enabled ? "enabled" : "disabled"}
-                            />
-                          </Group>
-                          <Text c="dimmed" size="sm" mt={5}>
-                            {target.principal_ref}
-                          </Text>
-                        </div>
-                      ))}
-                    </Stack>
+                    <>
+                      <ConnectionLogin
+                        channel="telegram"
+                        authenticated={channel.authenticated}
+                      />
+                      <Text size="sm" mt="lg">
+                        Receiving account:{" "}
+                        {configuration.data?.settings.targets.find(
+                          (target) => target.channel === "telegram",
+                        )?.peer_id ?? "Not configured"}
+                      </Text>
+                      {configuration.data && (
+                        <ConnectionSettings initial={configuration.data} />
+                      )}
+                    </>
                   )}
                 </Panel>
               ))}
             </SimpleGrid>
-            {configuration.data && (
-              <Stack mt="lg">
-                <ConnectionSettings initial={configuration.data} />
-              </Stack>
-            )}
             <Text size="xs" c="dimmed" mt="lg">
               Last checked {date(query.data.checked_at)}
             </Text>

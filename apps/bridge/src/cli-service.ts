@@ -13,6 +13,7 @@ import { ConfigurationStore } from './configuration-store.js';
 import { RuntimeManager } from './runtime-manager.js';
 import { createConnectionService, type ConnectionService } from './connection-service.js';
 import { DomainError } from '@voxdock/core';
+import { TargetPairingService } from './target-pairing-service.js';
 export interface Runtime {
   readyChannels: ReadonlySet<Channel>;
   onCallCreated(call: CallStatus): Promise<void>;
@@ -63,6 +64,7 @@ export async function startService(
   let store: CallStore | undefined;
   let runtime: RuntimeManager | undefined;
   let connections: ConnectionService | undefined;
+  let targetPairing: TargetPairingService | undefined;
   let app: Awaited<ReturnType<typeof createBridgeServer>> | undefined;
   let closed = false;
   async function close() {
@@ -74,13 +76,18 @@ export async function startService(
     } catch {
       failed = true;
     }
-    try {
-      if (connections) await bounded(() => connections!.close(), 15000);
-      if (runtime) await bounded(() => runtime!.close(), 25000);
-    } catch {
-      failed = true;
+    // Close runtime admission immediately, even if a platform cancellation later times out.
+    runtime?.beginShutdown();
+    for (const action of [
+      () => targetPairing ? bounded(() => targetPairing!.close(), 25000) : Promise.resolve(),
+      () => connections ? bounded(() => connections!.close(), 15000) : Promise.resolve(),
+      () => runtime ? bounded(() => runtime!.close(), 25000) : Promise.resolve(),
+    ]) {
+      try { await action(); } catch { failed = true; }
     }
     try {
+      if (failed) store?.setPaused(true);
+      runtime?.detachStore();
       store?.close();
     } catch {
       failed = true;
@@ -103,6 +110,12 @@ export async function startService(
     if (store.recover().length) store.setPaused(true);
     runtime = new RuntimeManager(config, store, directory, factory, configuration);
     await runtime.start();
+    const getWhatsAppConfig = async () => {
+      const wa = config.channels.whatsapp;
+      if (!wa.endpoint || !wa.media_token_file) throw new DomainError('whatsapp_service_required', 409);
+      const sessionId = wa.account_ref ?? configuration.view().settings.whatsapp.account_ref;
+      return { baseUrl: wa.endpoint, sessionId, clientId: `voxdock:${sessionId}` };
+    };
     connections = createConnectionService({
       acquire: () => runtime!.acquire(),
       async getTelegramConfig() {
@@ -111,18 +124,16 @@ export async function startService(
         if (!Number.isSafeInteger(apiId) || apiId <= 0 || !tg.api_hash_file || !tg.session_file) throw new DomainError('telegram_credentials_required', 409);
         return { apiId, apiHash: readPrivateText(resolve(directory, tg.api_hash_file)), sessionFile: resolve(directory, tg.session_file) };
       },
-      async getWhatsAppConfig() {
-        const wa = config.channels.whatsapp;
-        if (!wa.endpoint || !wa.account_ref) throw new DomainError('whatsapp_service_required', 409);
-        return { baseUrl: wa.endpoint, sessionId: wa.account_ref, clientId: `voxdock:${wa.account_ref}` };
-      },
+      getWhatsAppConfig,
     });
+    targetPairing = new TargetPairingService({ acquire: () => runtime!.acquire(), configuration: () => configuration.view(), getWhatsAppConfig });
     app = await createBridgeServer({
       config,
       store,
       controlToken: token,
       management: runtime,
       connections,
+      targetPairing,
       get readyChannels() { return runtime!.readyChannels; },
       onCallCreated: (call) => runtime!.onCallCreated(call),
       onEnd: (call) => runtime!.onEnd(call),
