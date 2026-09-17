@@ -3,7 +3,7 @@ import { access, chmod, mkdir, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { ConnectionFlow } from '@voxdock/contracts';
 import { authorizeTelegram, TelegramCleanupError, type TelegramAccountConfig } from '../../../packages/telegram/src/account.js';
-import { WhatsAppConnection, type WhatsAppConnectionConfig } from './connection-whatsapp.js';
+import { WhatsAppConnection, type WhatsAppConnectionConfig, type WhatsAppSession } from './connection-whatsapp.js';
 
 export class ConnectionError extends Error { constructor(message: string, readonly statusCode = 409) { super(message); } }
 export interface ConnectionDependencies {
@@ -15,8 +15,9 @@ export interface ConnectionDependencies {
   fetch?: typeof fetch;
   ttlMs?: number;
 }
-type Flow = { connecting?: boolean; canceling?: Promise<ConnectionFlow>; cleanupUnknown?: boolean; view: ConnectionFlow; abort: AbortController; release?: (safe: boolean) => Promise<void>; timer?: ReturnType<typeof setTimeout>; pending?: { resolve(value: string): void; reject(error: Error): void }; work?: Promise<void>; wa?: WhatsAppConnection; finishing?: Promise<void> };
+type Flow = { generation: number; connecting?: boolean; canceling?: Promise<ConnectionFlow>; cleanupUnknown?: boolean; view: ConnectionFlow; abort: AbortController; release?: (safe: boolean) => Promise<void>; timer?: ReturnType<typeof setTimeout>; pending?: { resolve(value: string): void; reject(error: Error): void }; work?: Promise<void>; wa?: WhatsAppConnection; finishing?: Promise<void> };
 const terminal = (flow: Flow) => ['connected', 'cancelled', 'expired', 'failed'].includes(flow.view.state);
+function clearQr(flow: Flow): void { delete flow.view.qr; delete flow.view.qr_expires_at; }
 
 export function createConnectionService(dependencies: ConnectionDependencies) {
   let current: Flow | undefined;
@@ -28,7 +29,7 @@ export function createConnectionService(dependencies: ConnectionDependencies) {
   }
   async function finish(flow: Flow, state: ConnectionFlow['state'], safe: boolean): Promise<void> {
     if (flow.finishing) return flow.finishing;
-    flow.view.state = state; delete flow.view.qr; clearTimeout(flow.timer);
+    flow.view.state = state; clearQr(flow); clearTimeout(flow.timer);
     flow.finishing = (async () => {
       const release = flow.release; delete flow.release;
       try { await release?.(safe); } catch { flow.view.state = 'failed'; flow.view.error = 'connection_cleanup_required'; }
@@ -40,7 +41,7 @@ export function createConnectionService(dependencies: ConnectionDependencies) {
     if (terminal(flow)) return { ...flow.view };
     if (flow.canceling) return flow.canceling;
     flow.canceling = (async () => {
-    flow.abort.abort(); delete flow.view.qr; flow.pending?.reject(new Error('Cancelled')); delete flow.pending;
+    flow.abort.abort(); flow.generation++; clearQr(flow); flow.pending?.reject(new Error('Cancelled')); delete flow.pending;
     let safe = true;
     try {
       if (flow.wa) {
@@ -62,7 +63,7 @@ export function createConnectionService(dependencies: ConnectionDependencies) {
     acquiring = true;
     try {
       const release = await dependencies.acquire();
-      const flow: Flow = { view: { id: randomUUID(), channel, state: 'starting', expires_at: new Date(Date.now() + ttl).toISOString() }, abort: new AbortController(), release };
+      const flow: Flow = { generation: 0, view: { id: randomUUID(), channel, state: 'starting', expires_at: new Date(Date.now() + ttl).toISOString() }, abort: new AbortController(), release };
       current = flow;
       flow.timer = setTimeout(() => { void cancel(flow.view.id, true).catch(() => {}); }, ttl); flow.timer.unref();
       return flow;
@@ -71,6 +72,35 @@ export function createConnectionService(dependencies: ConnectionDependencies) {
   function prompt(flow: Flow, state: 'code_required' | 'password_required'): Promise<string> {
     flow.abort.signal.throwIfAborted(); flow.view.state = state;
     return new Promise((resolve, reject) => { flow.pending = { resolve, reject }; });
+  }
+  async function applyWhatsAppStatus(flow: Flow, result: WhatsAppSession): Promise<void> {
+    if (flow.abort.signal.aborted || terminal(flow)) return;
+    clearQr(flow); delete flow.view.error;
+    if (result.paired && result.state === 'open') { await finish(flow, 'connected', true); return; }
+    const failures: Record<string, string> = { qr_expired: 'whatsapp_qr_expired', pairing_failed: 'whatsapp_pairing_failed', client_outdated: 'whatsapp_client_outdated', pairing_interrupted: 'whatsapp_pairing_interrupted', pairing_recovery_required: 'connection_cleanup_required', unlink_recovery_required: 'connection_cleanup_required' };
+    const error = failures[result.state];
+    if (error) {
+      flow.view.error = error;
+      let safe = error !== 'connection_cleanup_required';
+      if (safe) { try { await flow.wa!.request('disconnect'); } catch { safe = false; } }
+      if (flow.abort.signal.aborted) return;
+      if (!safe) { flow.cleanupUnknown = true; flow.view.error = 'connection_cleanup_required'; }
+      await finish(flow, result.state === 'qr_expired' ? 'expired' : 'failed', safe);
+    } else if (result.qr && result.state === 'qr' && (!result.qr_expires_at || Date.parse(result.qr_expires_at) > Date.now())) {
+      flow.view.state = 'qr_required'; flow.view.qr = result.qr;
+      if (result.qr_expires_at) flow.view.qr_expires_at = result.qr_expires_at;
+    } else flow.view.state = 'starting';
+  }
+  function requestWhatsApp(flow: Flow, action: 'connect' | 'refresh'): void {
+    flow.connecting = true; flow.generation++;
+    flow.view.state = 'starting'; clearQr(flow); delete flow.view.error;
+    flow.work = (async () => {
+      try { await applyWhatsAppStatus(flow, await flow.wa!.request(action)); }
+      catch {
+        flow.cleanupUnknown = true; flow.view.error = 'connection_cleanup_required';
+        if (!flow.abort.signal.aborted) await finish(flow, 'failed', false);
+      } finally { flow.connecting = false; }
+    })();
   }
   return {
     async accountStatus(): Promise<{ telegram: boolean; whatsapp: boolean }> {
@@ -108,32 +138,36 @@ export function createConnectionService(dependencies: ConnectionDependencies) {
       try { wa = new WhatsAppConnection(await dependencies.getWhatsAppConfig(), dependencies.fetch); }
       catch (error) { await finish(flow, 'failed', true); throw error; }
       flow.wa = wa;
-      flow.connecting = true;
-      flow.work = (async () => {
-        try {
-          const result = await wa.request('connect');
-          if (flow.abort.signal.aborted || terminal(flow)) return;
-          if (result.paired && result.state === 'open') await finish(flow, 'connected', true);
-          else if (result.qr) { flow.view.state = 'qr_required'; flow.view.qr = result.qr; }
-        } catch {
-          flow.cleanupUnknown = true;
-          flow.view.error = 'connection_cleanup_required';
-          if (!flow.abort.signal.aborted) await finish(flow, 'failed', false);
-        } finally { flow.connecting = false; }
-      })();
+      requestWhatsApp(flow, 'connect');
+      return { ...flow.view };
+    },
+    async refreshWhatsApp(id: string): Promise<ConnectionFlow> {
+      const flow = get(id);
+      if (flow.view.channel !== 'whatsapp' || !flow.wa) throw new ConnectionError('connection_challenge_stale');
+      if (flow.view.state === 'connected') return { ...flow.view };
+      if (terminal(flow) || flow.abort.signal.aborted || Date.now() >= Date.parse(flow.view.expires_at)) throw new ConnectionError('connection_challenge_stale');
+      if (flow.connecting) throw new ConnectionError('connection_operation_active');
+      clearTimeout(flow.timer);
+      flow.view.expires_at = new Date(Date.now() + ttl).toISOString();
+      flow.timer = setTimeout(() => { void cancel(flow.view.id, true).catch(() => {}); }, ttl); flow.timer.unref();
+      requestWhatsApp(flow, 'refresh');
       return { ...flow.view };
     },
     async flow(id: string): Promise<ConnectionFlow> {
       const flow = get(id);
       if (!terminal(flow) && !flow.connecting && flow.wa) {
+        const generation = flow.generation;
         try {
           const result = await flow.wa.request('status');
-          if (flow.abort.signal.aborted || terminal(flow)) return { ...flow.view };
-          if (result.paired && result.state === 'open') await finish(flow, 'connected', true);
-          else if (result.qr) { flow.view.state = 'qr_required'; flow.view.qr = result.qr; }
-          else { flow.view.state = 'starting'; delete flow.view.qr; }
-        } catch { flow.view.error = 'whatsapp_status_unavailable'; }
+          if (flow.abort.signal.aborted || terminal(flow) || flow.connecting || generation !== flow.generation) return { ...flow.view };
+          flow.connecting = true;
+          flow.work = applyWhatsAppStatus(flow, result).finally(() => { flow.connecting = false; });
+          await flow.work;
+        } catch {
+          if (!flow.abort.signal.aborted && !terminal(flow) && !flow.connecting && generation === flow.generation) { clearQr(flow); flow.view.state = 'starting'; flow.view.error = 'whatsapp_status_unavailable'; }
+        }
       }
+      if (flow.view.qr_expires_at && Date.parse(flow.view.qr_expires_at) <= Date.now()) { clearQr(flow); flow.view.state = 'starting'; }
       return { ...flow.view };
     },
     async submit(id: string, field: 'code' | 'password', value: string): Promise<ConnectionFlow> {

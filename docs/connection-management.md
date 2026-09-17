@@ -14,6 +14,7 @@ All challenge responses use `Cache-Control: no-store`. QR content is returned on
 - `POST /connections/whatsapp/connect` with `{}`.
 - `POST /connections/whatsapp/unlink` with `{}`; explicit sign-out/reset, independent of disconnect.
 - `GET /connections/flows/:id` returns `ConnectionFlow`.
+- `POST /connections/flows/:id/refresh` with `{}` refreshes an active WhatsApp QR attempt under the same management lease. It preserves an account that has completed pairing and rejects Telegram or expired flows.
 - `POST /connections/flows/:id/code` with `{code}`.
 - `POST /connections/flows/:id/password` with `{password}`.
 - `POST /connections/flows/:id/cancel` with `{}`.
@@ -21,7 +22,7 @@ All challenge responses use `Cache-Control: no-store`. QR content is returned on
 - WhatsApp receiving-number setup, verification and confirmation routes are documented in the [console API](console.md#api-and-cli-parity).
 - `POST /connections/telegram/target` with `{peer_id, enabled}` saves the manual numeric Telegram target.
 
-The flow has `id`, `channel`, `state`, `expires_at`, optional `qr`, and optional sanitized `error`. Terminal states are connected, cancelled, expired, or failed. Polling a flow never starts a login. Restart loses pending challenges; calling remains controlled by the durable pause and runtime reconciliation rules.
+The flow has `id`, `channel`, `state`, `expires_at`, optional `qr`, optional `qr_expires_at`, and optional sanitized `error`. The QR expiry is separate from the overall challenge deadline. Terminal states are connected, cancelled, expired, or failed. Polling a flow never starts a login. Restart loses pending challenges; calling remains controlled by the durable pause and runtime reconciliation rules.
 
 ## Validation and limits
 
@@ -34,6 +35,8 @@ Fake Telegram callbacks cover code/2FA, exclusive lease ownership, cancellation,
 A connect request can finish after cancellation is requested. Cancellation now drains its pending connect request before disconnecting. A timed-out or failed mutation has an unknown outcome, so the lifecycle lease is released as unsafe and calling remains blocked. Shutdown also waits for a terminal flow's pending lifecycle release. These cases have deterministic fake-transport regression tests.
 
 Sidecar status reads have a three-second deadline; mutations have a ten-second deadline. All sidecar responses are limited to 64 KiB. Account-status reads are nonmutating and unknown status is reported disconnected. WhatsApp open status requires a currently connected and logged-in socket. Disconnect cancels and joins the QR worker before publishing the final disconnected state, preventing a late QR from reappearing. API errors use fixed codes suitable for frontend translation.
+
+Refreshing QR clears the previous code immediately, renews the challenge deadline, and requests a fresh unpaired device attempt from the sidecar. It does not unlink an established account. A credential write already in progress is allowed to finish; status polling reports the outcome. Cancellation drains any pending refresh before disconnecting. Responses from earlier polls cannot replace the refreshed code. Expired QR content and transient status failures clear the displayed code, and a later successful status clears the transient error. Provider timeout, outdated-client and pairing failures end the flow with a fixed error category; unknown credential cleanup retains the recovery pause.
 
 ## Guided WhatsApp receiving account
 

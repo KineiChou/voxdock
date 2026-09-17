@@ -17,6 +17,7 @@ export function registerConnectionRoutes(app: FastifyInstance, prefix: string, s
   app.post(`${prefix}/connections/whatsapp/connect`, { schema: { body: empty } }, (_, reply) => invoke(reply, () => service.startWhatsApp()));
   app.post(`${prefix}/connections/whatsapp/unlink`, { schema: { body: empty } }, (_, reply) => invoke(reply, () => service.unlinkWhatsApp()));
   app.get<{ Params: { id: string } }>(`${prefix}/connections/flows/:id`, { schema: { params: challenge } }, (request, reply) => invoke(reply, () => service.flow(request.params.id)));
+  app.post<{ Params: { id: string } }>(`${prefix}/connections/flows/:id/refresh`, { schema: { params: challenge, body: empty } }, (request, reply) => invoke(reply, () => service.refreshWhatsApp(request.params.id)));
   for (const field of ['code', 'password'] as const) {
     app.post<{ Params: { id: string }; Body: Record<string, string> }>(`${prefix}/connections/flows/:id/${field}`, { schema: { params: challenge, body: Type.Object({ [field]: Type.String({ minLength: 1, maxLength: field === 'code' ? 16 : 256 }) }, strict) } }, (request, reply) => invoke(reply, () => service.submit(request.params.id, field, request.body[field]!)));
   }

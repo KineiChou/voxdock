@@ -1,5 +1,5 @@
 export interface WhatsAppConnectionConfig { baseUrl: string; sessionId: string; clientId: string; }
-export interface WhatsAppSession { paired: boolean; state: string; qr?: string; phone?: string; }
+export interface WhatsAppSession { paired: boolean; state: string; qr?: string; qr_expires_at?: string; phone?: string; }
 export interface WhatsAppPairing {
   id: string; method: 'message' | 'call'; state: 'waiting' | 'candidate' | 'cancelled' | 'expired'; expires_at: string;
   candidate?: { id: string; phone: string };
@@ -14,15 +14,17 @@ export class WhatsAppConnection {
     this.base = new URL(config.baseUrl);
     if (!['http:', 'https:'].includes(this.base.protocol) || this.base.username || this.base.password || this.base.search || this.base.hash || this.base.pathname !== '/' || !/^[A-Za-z0-9_-]{1,100}$/.test(config.sessionId) || !config.clientId || /[\r\n]/.test(config.clientId)) throw new Error('Invalid WhatsApp connection configuration');
   }
-  async request(action: 'status' | 'connect' | 'disconnect' | 'unlink'): Promise<WhatsAppSession> {
+  async request(action: 'status' | 'connect' | 'refresh' | 'disconnect' | 'unlink'): Promise<WhatsAppSession> {
     const suffix = action === 'status' ? '' : `/${action}`;
-    const value = await this.json(suffix, action === 'status' ? 'GET' : 'POST', action === 'unlink' ? {} : undefined);
+    const value = await this.json(suffix, action === 'status' ? 'GET' : 'POST', action === 'unlink' || action === 'refresh' ? {} : undefined);
     if (!record(value) || typeof value.paired !== 'boolean' || typeof value.state !== 'string') throw new Error('Invalid WhatsApp session status');
     if (action === 'disconnect' && !['disconnected', 'missing'].includes(value.state)) throw new Error('WhatsApp disconnect unconfirmed');
     if (action === 'unlink' && (value.paired || !['unlinked', 'missing'].includes(value.state))) throw new Error('WhatsApp unlink unconfirmed');
     const qr = typeof value.qr === 'string' && value.qr.length <= 4096 ? value.qr : undefined;
+    if (value.qr_expires_at !== undefined && (typeof value.qr_expires_at !== 'string' || !Number.isFinite(Date.parse(value.qr_expires_at)))) throw new Error('Invalid WhatsApp QR expiry');
+    const qrExpiresAt = value.qr_expires_at as string | undefined;
     const ownPhone = typeof value.phone === 'string' && phone.test(value.phone) ? value.phone : undefined;
-    return { paired: value.paired, state: value.state, ...(qr ? { qr } : {}), ...(ownPhone ? { phone: ownPhone } : {}) };
+    return { paired: value.paired, state: value.state, ...(qr ? { qr } : {}), ...(qrExpiresAt ? { qr_expires_at: qrExpiresAt } : {}), ...(ownPhone ? { phone: ownPhone } : {}) };
   }
   async pairing(action: 'start' | 'status' | 'cancel', id: string, input?: { method: 'message' | 'call'; expires_at: string; code?: string }): Promise<WhatsAppPairing> {
     if (!uuid.test(id) || (action === 'start' && !input)) throw new Error('Invalid WhatsApp pairing request');
