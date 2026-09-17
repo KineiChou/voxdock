@@ -1,15 +1,20 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import Fastify from 'fastify';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createConnectionService } from './connection-service.js';
 import { registerConnectionRoutes } from './connection-routes.js';
 
-afterEach(() => vi.useRealTimers());
+const directories: string[] = [];
+afterEach(() => { vi.useRealTimers(); for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true }); });
 function fixture(transport: typeof fetch) {
+  const directory = mkdtempSync(join(tmpdir(), 'voxdock-qr-test-')); directories.push(directory);
   const release = vi.fn(async (_safe: boolean) => {});
   const acquire = vi.fn(async () => release);
   const service = createConnectionService({ acquire, fetch: transport,
     getWhatsAppConfig: async () => ({ baseUrl: 'http://sidecar:8080', sessionId: 'fixed', clientId: 'voxdock' }),
-    getTelegramConfig: async () => ({ apiId: 1, apiHash: 'test', sessionFile: '/tmp/unused-qr-test-session' }),
+    getTelegramConfig: async () => ({ apiId: 1, apiHash: 'test', sessionFile: join(directory, 'session') }),
     telegramAuthorize: async (_, prompts) => { await prompts.phoneCode(); return 'account'; },
   });
   return { service, release, acquire };
@@ -101,6 +106,7 @@ it('clears unavailable and expired QR data and clears transient errors on recove
 it('rejects stale and Telegram refresh and applies strict no-store HTTP contracts', async () => {
   const { service } = fixture(vi.fn<typeof fetch>());
   const flow = await service.startTelegram('+12345678901'); await tick();
+  expect((await service.flow(flow.id)).state).toBe('code_required');
   const app = Fastify({ ajv: { customOptions: { removeAdditional: false, coerceTypes: false } } });
   registerConnectionRoutes(app, '/admin/v1', service);
   const url = `/admin/v1/connections/flows/${flow.id}/refresh`;
