@@ -1,6 +1,7 @@
 import { Type, type Static } from "@sinclair/typebox";
 export type * from './console.js';
 export * from './console-configuration.js';
+export type * from './console-account.js';
 
 const object = { additionalProperties: false } as const;
 export const RefSchema = Type.String({
