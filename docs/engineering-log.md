@@ -1,8 +1,25 @@
 # Engineering record
 
+## Console management and conversation display, 2026-09-17
+
+Settings and Connections previously exposed status only, so an operator could not configure or pair accounts from the console. Application settings now use a private revisioned store and one shared API/CLI service. Deployment infrastructure remains file-owned. Save/apply and pairing serialize with admission, require an idle ledger, and pause new calls. Form drafts remain independent of polling. Revision checks prevent stale overwrites; failed replacement retains the prior committed configuration and attempts rollback. Uncertain runtime cleanup blocks further replacement.
+
+A persistent administrator account adds username/password login, credential rotation and a remote-management switch. Fresh installations generate a private bootstrap file; legacy installations preserve their password under username `admin`. Recovery requires a stopped service. Network restrictions cover both cookie and bearer Settings/Connections/account paths without disabling calls or call history. Trusted proxies must replace the original-client header with a single IP.
+
+| Symptom, expected behavior and impact | Confirmed cause and correction | Verification boundary |
+| --- | --- | --- |
+| Sign out could fall below a short viewport; it should remain reachable while navigation scrolls | The sidebar did not reserve an independent footer. Use a growing scroll section and a fixed footer, with compact short-screen spacing | Console production build/typecheck passed; integrated short-viewport browser check pending |
+| Each word/delta appeared in a separate conversation card, making retained text hard to read | The UI rendered raw fragments. Group contiguous deltas in the backend, preserving exact text, source final markers and raw exports. Context revision changes alone do not split a group because Live advances them for each delta | Projection regression cases include raw-page boundaries, Unicode/spacing and source immutability; integrated suite result pending |
+| A paired account with calling disabled could show Connect again after reload | Calling readiness was used as authentication state. Expose account authentication independently and use it for disconnect controls | Console typecheck passed; integrated account projection and real pairing acceptance pending |
+| Existing deployment hashes had no username/account rotation workflow | Import the legacy hash into a persistent single-account record, generate credentials only for fresh installs, and revoke sessions on rotation | Account/recovery tests are part of integration; no deployment claim |
+
+Telegram exposes phone, code and two-step verification challenges. WhatsApp exposes a QR flow through the controlled-session WaCalls patch; this requires rebuilding the sidecar image. Flow expiry, cancel and disconnect run on the backend; pairing does not create test calls. QR rendering uses the pinned MIT-licensed node-qrcode package. Stored secret values are never returned to the browser.
+
+At this work unit, the console TypeScript check and production build passed. Full integrated backend checks, browser acceptance, image verification and deployment verification are pending the coordinating integration run. Real account pairing and phone calls remain separate acceptance gates. Relevant code is in `apps/console/src`, `apps/bridge/src/{console-account,console-network,configuration-store,runtime-manager,connection-service}.ts` and `packages/core/src/conversation.ts`; the integration PR will provide the release traceability.
+
 ## Operator console, 2026-09-17
 
-The bridge had durable records but no operator UI. A Mantine/React/Vite console now renders backend projections for call trends, usage reservations, filtered records, transcripts, delegation results and applied configuration. Browser and CLI controls share server services. File-managed settings and platform login remain separate; no browser-only call coordinator or fake pairing controls were added.
+The bridge had durable records but no operator UI. A Mantine/React/Vite console now renders backend projections for call trends, usage reservations, filtered records, transcripts, delegation results and applied configuration. Browser and CLI controls share server services. At that stage, file-managed settings and platform login remained separate. The management update above replaces that limitation; the browser still contains no call coordinator.
 
 Schema 2 preserves command identities and adds historical channel/source snapshots, durable connection facts and transcript cursors. Migration leaves unevidenced historical data unknown. Reports count current delegation revisions once, exclude active calls from observed terminal connection rates, and keep settled/reserved/unknown Live seconds separate. Calendar-window tests cover local midnight and daylight-saving transitions; mismatched ledger timezones fail explicitly.
 

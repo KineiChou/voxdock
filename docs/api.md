@@ -1,6 +1,6 @@
 # Control and integration API
 
-The `/v1/*` service requires `Authorization: Bearer <control-token>`; `/healthz` is public. Keep the control API on a trusted private network or behind your authenticated HTTPS deployment. The optional [operator console](console.md) serves public login assets at `/console/` and uses separate authenticated cookie sessions at `/admin/v1/*`. Credentials come from operator-managed files; call requests select configured target references and cannot supply recipients or backend URLs.
+The `/v1/*` service requires `Authorization: Bearer <control-token>`; `/healthz` is public. Keep the control API on a trusted private network or behind your authenticated HTTPS deployment. The optional [operator console](console.md) serves public login assets at `/console/` and uses separate authenticated cookie sessions at `/admin/v1/*`. Initial console credentials are generated into a private bootstrap file; managed credentials remain private. Call requests select configured target references and cannot supply recipients or backend URLs.
 
 | Endpoint | Purpose |
 | --- | --- |
@@ -10,7 +10,7 @@ The `/v1/*` service requires `Authorization: Bearer <control-token>`; `/healthz`
 | `POST /v1/calls/:call_id/end` | Request termination; inspect subsequent state |
 | `POST /v1/control/pause` | Persist a pause for new calls |
 | `POST /v1/control/resume` | Resume only when enabled, idle and ready; unresolved calls remain blocked |
-| `GET /v1/console/*` | Server-side dashboard, filtered calls, transcripts, configuration and connections; see [console API](console.md#api-and-cli-parity) |
+| `/v1/console/*` | Dashboard, records, managed settings and pairing; same backend as browser routes, with bearer authentication; see [console API](console.md#api-and-cli-parity) |
 | `GET /v1/events?after=0&limit=100` | Read ordered durable events |
 | `GET /v1/calls/:call_id/record` | Call, transcript availability, delegation/result records and usage |
 | `POST /v1/calls/:call_id/delegations/:delegation_id/results` | Deliver a correlated asynchronous backend result |
@@ -25,3 +25,13 @@ An uncertain call requires reconciliation. An end request cannot erase that stat
 Backend results include both `context_revision` (the source conversation snapshot) and `revision` (the business result sequence). An old-context result may be recorded without being spoken. `playback_status:eligible` is a routing decision, not evidence of playback or an external action. Result retries reuse the original `result_id`; the bridge does not repeat speech on a duplicate result.
 
 See [backend integration](backend.md), [runtime](runtime.md) and [recovery](state-and-recovery.md) for the corresponding behavior. API tokens, audit exports and transcripts are private operator data.
+
+## Managed settings and connections
+
+Both `/admin/v1` (cookie plus Origin/CSRF for mutations) and `/v1/console` (bearer) expose `GET/PUT /settings/configuration` and the connection-flow routes. The managed configuration PUT requires `{ expected_revision, settings, secrets? }`; GET returns `{ revision, settings, credentials, deployment, applying }`. Secret values are never returned. Application fields and fixed targets are editable; timezone, WhatsApp endpoint and other deployment fields remain deployment-owned.
+
+Revision conflicts, active/uncertain calls and concurrent management return 409. Validation/missing credentials return 400. Apply stops admission and replaces the runtime only while idle; successful changes remain paused for an explicit resume. Failure retains the previous committed revision and attempts runtime rollback; shutdown uncertainty requires operator recovery rather than overlapping runtimes.
+
+Connection flows report `starting`, `code_required`, `password_required`, `qr_required`, `connected`, `cancelled`, `expired` or `failed`. A QR is ephemeral and appears only in `qr_required`. The server chooses the configured platform account and upstream service; clients cannot supply arbitrary service URLs. Calls are never fabricated to test pairing. WhatsApp requires the matching controlled-session sidecar patch.
+
+Disabling remote management applies to Settings/Connections/account paths for cookie and bearer clients alike. Calls, audit views and normal call controls remain available. Trusted proxy configuration and offline account recovery are described in [console setup](console.md#enable-the-console).

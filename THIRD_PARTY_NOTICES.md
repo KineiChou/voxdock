@@ -9,6 +9,7 @@ VoxDock's root license covers its original code, not third-party components. Thi
 | [WaCalls](https://github.com/JotaDev66/WaCalls) | edeb31f0427aba896639db503153b777a405eccf | MIT, Copyright (c) 2026 jotadev66 |
 | WaCalls vendored MLow | as above, `internal/voip/media/mlow` | MIT, Copyright 2026 Rajeh Taher; upstream README credits purpshell/meowcaller and reference whatsapp-rust implementation |
 | [Mantine](https://github.com/mantinedev/mantine) | 9.6.1 | MIT; UI components and charts, retain distributed license notices |
+| [node-qrcode](https://github.com/soldair/node-qrcode) | 1.5.4 | MIT, Copyright (c) 2012 Ryan Day; local rendering of WhatsApp pairing codes, retain package license |
 | [React](https://github.com/facebook/react) | 19.3.0 | MIT; frontend runtime |
 | [Recharts](https://github.com/recharts/recharts) | 3.10.1 | MIT; chart rendering through Mantine |
 | [Tabler Icons](https://github.com/tabler/tabler-icons) | 3.46.0 | MIT; interface icons |
