@@ -1,6 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { ChannelSchema, RefSchema } from "@voxdock/contracts";
+import { ChannelSchema, RefSchema, LivePreferencesSchema, livePreferencesValid } from "@voxdock/contracts";
 import { isIP } from 'node:net';
 
 const object = { additionalProperties: false } as const;
@@ -111,11 +111,8 @@ export const BridgeConfigSchema = Type.Object(
     ),
     live: Type.Object(
       {
-        model: Type.Literal("gpt-live-1", { default: "gpt-live-1" }),
+        ...LivePreferencesSchema.properties,
         api_key_file: Type.Optional(path),
-        voice: Type.String({ minLength: 1, default: "marin" }),
-        language: Type.String({ minLength: 2, default: "en" }),
-        delegation: Type.Literal("client", { default: "client" }),
         store: Type.Literal(false, { default: false }),
         sample_rate_hz: Type.Object(
           {
@@ -205,6 +202,7 @@ export function parseConfig(input: unknown): BridgeConfig {
     );
   }
   const config = value;
+  if (!livePreferencesValid(config.live)) throw new ConfigError("Responses delegation requires an enabled tool when tool choice is required");
   if (config.console.trusted_proxy_addresses.some(address => !isIP(address))) throw new ConfigError('Trusted console proxies must be literal IP addresses');
   if (config.console.enabled && !config.console.public_origin) {
     throw new ConfigError("Console requires a public origin");

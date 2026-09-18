@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { serializeDelegation, type LiveDelegationConfig } from './delegation-config.js';
+import { ManagedResponses, type ManagedResponse } from './managed-responses.js';
+export type { LiveDelegationConfig, ResponsesDelegationConfig } from './delegation-config.js';
 
 export interface LiveTransport {
   readonly bufferedAmount: number;
@@ -8,7 +11,8 @@ export interface LiveTransport {
 }
 export interface LiveConfig {
   instructions: string;
-  voice?: string;
+  voice?: string | { id: string };
+  delegation?: LiveDelegationConfig;
   rate?: 16000 | 24000;
   startTimeoutMs?: number;
   closeTimeoutMs?: number;
@@ -18,7 +22,8 @@ export type LiveEvent =
   | { type: 'ready'; sessionId: string }
   | { type: 'audio'; pcm: Buffer }
   | { type: 'transcript'; speaker: 'user' | 'assistant'; delta: string; startMs: number; endMs: number; eventId?: string }
-  | { type: 'delegation'; id: string; target: string; offsetMs: number }
+  | { type: 'delegation'; id: string; target: 'client' | 'responses'; offsetMs: number }
+  | ManagedResponse
   | { type: 'commentaryAccepted' | 'instructionsAccepted' | 'thinkingAccepted'; clientEventId: string }
   | { type: 'usage'; seconds: number }
   | { type: 'fault'; code: string; clientEventId?: string }
@@ -33,10 +38,13 @@ export class LiveClient {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private unsubscribe: (() => void) | undefined;
   private seconds: number | undefined;
-  private readonly delegations = new Set<string>();
+  private readonly delegations = new Map<string, 'client' | 'responses'>();
+  private readonly managed = new ManagedResponses();
   private readonly config: Required<LiveConfig>;
   constructor(private readonly transport: LiveTransport, config: LiveConfig, private readonly emit: (event: LiveEvent) => void) {
-    this.config = { voice: 'marin', rate: 24000, startTimeoutMs: 15000, closeTimeoutMs: 15000, maxBufferedBytes: 128000, ...config };
+    this.config = { delegation: { type: 'client' }, voice: 'marin', rate: 24000, startTimeoutMs: 15000, closeTimeoutMs: 15000, maxBufferedBytes: 128000, ...config };
+    this.config.delegation = serializeDelegation(this.config.delegation);
+    if (typeof this.config.voice !== 'string') this.config.voice = { id: this.config.voice.id };
     if (![16000, 24000].includes(this.config.rate)) throw new Error('Unsupported Live PCM rate');
     for (const n of [this.config.startTimeoutMs, this.config.closeTimeoutMs, this.config.maxBufferedBytes]) {
       if (!Number.isSafeInteger(n) || n <= 0) throw new Error('Invalid Live limit');
@@ -51,7 +59,7 @@ export class LiveClient {
       open: () => { if (this.state === 'starting') { try { this.send({ type: 'session.start', session: {
         model: 'gpt-live-1', instructions: this.config.instructions, store: false,
         audio: { format: { type: 'audio/pcm', rate: this.config.rate }, output: { voice: this.config.voice } },
-        delegation: { type: 'client' },
+        delegation: this.config.delegation,
       } }); } catch { /* send already finalized the session */ } } },
       message: text => this.receive(text),
       close: () => this.finish(false, 'transport_closed'),
@@ -80,7 +88,7 @@ export class LiveClient {
     this.requireReady();
     // Conservative byte cap keeps brief multilingual appends below the API token limit.
     if (!content.trim() || Buffer.byteLength(content, 'utf8') > 500) throw new Error('Append exceeds 500 UTF-8 bytes');
-    if (delegationId !== null && !this.delegations.has(delegationId)) throw new Error('Unknown delegation');
+    if (delegationId !== null && this.delegations.get(delegationId) !== 'client') throw new Error('Unknown delegation');
     const id = randomUUID();
     this.send({ type: `session.${kind}.append`, event_id: id, delegation_id: delegationId, content });
     return id;
@@ -137,18 +145,24 @@ export class LiveClient {
       if (typeof e.delta !== 'string' || !time(e.start_ms) || !time(e.end_ms) || e.end_ms < e.start_ms) { this.finish(false, 'invalid_transcript'); return; }
       this.emit({ type: 'transcript', speaker: e.type === 'session.input_transcript.delta' ? 'user' : 'assistant', delta: e.delta, startMs: e.start_ms, endMs: e.end_ms, ...(typeof e.event_id === 'string' ? { eventId: e.event_id } : {}) });
     } else if (e.type === 'session.delegation.created' && this.state === 'ready') {
-      if (!object(e.delegation) || typeof e.delegation.id !== 'string' || e.delegation.target !== 'client' || !time(e.offset_ms)) { this.finish(false, 'invalid_delegation'); return; }
+      if (!object(e.delegation) || typeof e.delegation.id !== 'string' || e.delegation.target !== this.config.delegation.type || !time(e.offset_ms)) { this.finish(false, 'invalid_delegation'); return; }
       if (this.delegations.has(e.delegation.id)) return;
       if (this.delegations.size >= 1024) { this.finish(false, 'delegation_limit'); return; }
-      this.delegations.add(e.delegation.id);
-      this.emit({ type: 'delegation', id: e.delegation.id, target: e.delegation.target, offsetMs: e.offset_ms });
+      const target = e.delegation.target as 'client' | 'responses';
+      this.delegations.set(e.delegation.id, target);
+      this.emit({ type: 'delegation', id: e.delegation.id, target, offsetMs: e.offset_ms });
+    } else if (e.type === 'response.event' && typeof e.delegation_id === 'string' && this.delegations.get(e.delegation_id) === 'responses' && object(e.event)) {
+      try {
+        const result = this.managed.receive(e.delegation_id, e.event);
+        if (result) this.emit(result);
+      } catch { this.finish(false, 'invalid_managed_response'); }
     } else if ((e.type === 'session.commentary.appended' || e.type === 'session.instructions.appended' || e.type === 'session.thinking.appended') && typeof e.client_event_id === 'string') {
       this.emit({ type: e.type === 'session.commentary.appended' ? 'commentaryAccepted' : e.type === 'session.instructions.appended' ? 'instructionsAccepted' : 'thinkingAccepted', clientEventId: e.client_event_id });
     }
   }
   private finish(complete: boolean, reason: string): void {
     if (this.state === 'closed') return;
-    this.state = 'closed'; clearTimeout(this.timer); this.unsubscribe?.(); this.delegations.clear();
+    this.state = 'closed'; clearTimeout(this.timer); this.unsubscribe?.(); this.delegations.clear(); this.managed.clear();
     this.transport.terminate();
     this.emit({ type: 'closed', finalization: complete ? 'complete' : 'incomplete', reason, ...(this.seconds === undefined ? {} : { seconds: this.seconds }) });
   }

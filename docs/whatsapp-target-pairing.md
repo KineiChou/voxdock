@@ -32,6 +32,9 @@ or normal incoming-call event. Rejection never accepts a call or starts Live.
 Only the first eligible candidate is retained. Read and receive operations enforce
 expiry. Cancellation, disconnect, client replacement and shutdown clear observation.
 A shared session mutex serializes observation, cancellation, expiry and call creation.
+The normal offer path releases the session mutex after reserving its call registry
+entry and before callbacks or network I/O. That reservation prevents observer
+arming; observer rejection remains serialized with cancellation.
 
 Message verification accepts an exact ordinary `conversation` or plain
 `extendedTextMessage.text` payload from a direct incoming message. Known device,
@@ -51,7 +54,7 @@ Unmapped LIDs and the server's own canonical phone are ineligible. Call candidat
 must be direct offers with current timestamps. UI confirmation is still required;
 receiving a verification event never authorizes target binding by itself.
 
-## Build and validation
+## Build
 
 Apply `media-websocket.patch`, `console-connections.patch`,
 `target-pairing.patch`, `account-unlink.patch`, then `qr-refresh.patch` to WaCalls commit
@@ -59,63 +62,12 @@ Apply `media-websocket.patch`, `console-connections.patch`,
 this order. The script includes connection, target verification and account
 unlink and QR refresh APIs and hashes all five patches.
 
-Targeted synthetic Go tests cover filtering, expiry, own-account/LID rejection,
-first-candidate immutability, concurrent cancellation, unknown IDs, strict request
-validation, code redaction, call isolation and shutdown. No real account, phone,
-Live session or paid provider is used. Real plain-text and incoming-call acceptance
-remain deployment acceptance work.
+## QR lifecycle
 
-Local verification on 2026-09-17: all three patches applied cleanly to the pinned
-revision; `go test -race ./cmd/server -run 'TestTarget|TestConnection|TestDisconnect'`
-and `go test ./internal/voip/call` passed. The full server suite could not complete
-inside the restricted sandbox because existing media/WebRTC tests require local
-TCP/UDP listeners. CI retains full tests and race checks. Shell syntax and
-`git diff --check` passed.
-
-## Compatibility correction (2026-09-17)
-
-Review found two defects before real-account acceptance: conversation-only
-protobuf filtering rejected legitimate transport metadata and plain extended
-text; nanosecond arming comparisons rejected messages/calls stamped in the arming
-second. These could prevent a legitimate user from producing a candidate.
-
-Evidence is from the pinned whatsmeow module
-`v0.0.0-20260622185415-5f04eac6dbbb`: `send.go:234–244` inserts a message secret
-when reporting tokens are enabled, `reportingtoken.go:39–47` includes ordinary
-text, and `send.go:921` classifies conversation and extended text as text.
-`proto/waE2E/WAWebProtobufsE2E.pb.go` defines the explicit transport/context fields.
-`message.go:216` and `call.go:29` decode `UnixTime("t")`;
-`binary/attrs.go:116–123` implements this as `time.Unix(seconds, 0)`.
-
-The correction allowlists the known metadata fields without returning or logging
-their values, still rejects quoted/forwarded/bot/media/unknown protobuf content,
-and compares received timestamps to the arming second. Synthetic tests cover both
-text representations with transport metadata, forbidden context/payloads, and
-same-second versus prior-second messages and calls. Actual phone interoperability
-remains unverified.
-
-Lock review found existing incoming/state callbacks use the call registry and
-broker without reacquiring the session mutex. The normal offer path now releases
-the session mutex after its registry reservation and before callbacks/network I/O;
-the reserved call still prevents observer arming. Observer rejection remains
-bounded and serialized with cancellation.
-
-Follow-up verification: fresh pinned-source patch application passed; targeted
-observer/connection race tests passed. Full `go test -race ./cmd/server
-./internal/voip/call` passed with local listener access enabled for synthetic
-media tests, resolving the earlier sandbox-only verification limitation. No
-account credentials, external platform calls or paid services were used.
-
-## QR lifecycle correction (2026-09-17)
-
-The connection patch ignored terminal QR errors and retained the last QR after
-its channel closed; reconnect then treated that cached state as active. The fifth
-patch handles terminal errors, rotates only unpaired client instances, and exposes
-`qr_expires_at` in UTC. An expired individual code is hidden while rotation remains
-`connecting`; exhausted QR channels report `qr_expired`. Pairing failures use
-`pairing_failed`, outdated clients use `client_outdated`; `error` contains only a
-stable category. This is a verified lifecycle defect, not a confirmed explanation
-of any particular phone-side network error.
+QR codes include `qr_expires_at` in UTC. An expired code is hidden while rotation
+remains `connecting`; exhausted QR channels report `qr_expired`. Pairing failures
+use `pairing_failed`, outdated clients use `client_outdated`, and `error` contains
+only a stable category. Rotation replaces only unpaired client instances.
 
 `POST /api/voxdock/sessions/{sid}/refresh` starts a new unpaired QR attempt and
 returns status. Existing completed credentials are preserved. A credential write
@@ -128,9 +80,4 @@ is insufficient. An identity remaining after a failed write produces
 credential completion; only authenticated connection readiness reports `open`.
 Failure logs contain stable categories, without protocol payloads or QR values.
 
-Validation: all five patches apply to the pinned source. The focused Go lifecycle,
-connection, unlink and session tests pass with the race detector. Tests cover late
-retired events, fresh device identity, concurrent admission versus retirement,
-paired-account preservation, cancellation, terminal QR removal and deadline
-filtering. The full `go test -race ./cmd/server` suite also passed with authorized
-local TCP/UDP access. Real account pairing remains a separate acceptance check.
+See [known limitations](limitations.md) for real-device validation boundaries.

@@ -13,9 +13,11 @@ import { useResource } from "./api";
 import { Fields } from "./shared";
 import { useConfigurationForm } from "./configuration-form";
 import { VoiceFields } from "./settings-voice";
+import { DelegationFields } from "./settings-delegation";
 
 export const settingsTitles = {
   live: "Voice & conversation",
+  delegation: "Delegation & tools",
   calling: "Calling & limits",
   backend: "Agent connection",
   records: "Data & privacy",
@@ -52,7 +54,7 @@ export function SettingsEditor({
           event.preventDefault();
           if (
             form.busy ||
-            (group === "live" && (!options.data || options.error))
+            ((group === "live" || group === "delegation") && (!options.data || options.error))
           )
             return;
           void form.save().then((success) => {
@@ -67,6 +69,8 @@ export function SettingsEditor({
           <Stack>
             {group === "live" ? (
               <VoiceFields form={form} options={options} />
+            ) : group === "delegation" ? (
+              <DelegationFields form={form} options={options} />
             ) : (
               <>
                 {group === "calling" && (
@@ -223,7 +227,7 @@ export function SettingsEditor({
             )}
             <EditorActions
               form={form}
-              disabled={group === "live" && (!options.data || !!options.error)}
+              disabled={(group === "live" || group === "delegation") && (!options.data || !!options.error)}
             />
             <Button variant="subtle" disabled={form.busy} onClick={onClose}>
               Cancel

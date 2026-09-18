@@ -8,8 +8,9 @@ import { TelegramSignaling } from './signaling.ts';
 import { telegramSignalTransport } from './transport.ts';
 
 export type TelegramCallState = 'dialing' | 'ringing' | 'connected' | 'ending' | 'ended' | 'uncertain';
+export type TelegramFailureReason = 'telegram_media_connect_failed';
 export interface TelegramCallbacks {
-  onState: (ref: string | undefined, state: TelegramCallState) => void;
+  onState: (ref: string | undefined, state: TelegramCallState, reason?: TelegramFailureReason) => void;
   onAudio: (ref: string, pcm: Buffer) => void;
   onAudioReady: (ref: string) => void;
   onIncoming: (ref: string, allowed: boolean) => void;
@@ -182,7 +183,8 @@ export class TelegramDriver {
       this.callbacks.onState(call.id.toString(), 'connected');
       active.signal = new TelegramSignaling({ native: active.media.native, transport: telegramSignalTransport(this.client),
         userId: this.target, callId: BigInt(call.id.toString()), accessHash: BigInt(call.accessHash.toString()), onFailure: () => this.fail() });
-      await active.media.connect(call);
+      try { await active.media.connect(call); }
+      catch { this.fail('telegram_media_connect_failed'); throw new Error('Telegram media connection failed'); }
       for (const data of active.queuedSignals) await active.signal.receive(BigInt(call.id.toString()), data);
       active.queuedSignals = [];
     }
@@ -227,12 +229,12 @@ export class TelegramDriver {
     } finally { for (const remove of this.removeHandlers) remove(); }
   }
 
-  private fail(): void {
+  private fail(reason?: TelegramFailureReason): void {
     const active = this.active;
     if (!active || active.uncertain) return;
     active.uncertain = true; active.signal?.close(); active.abort?.();
     void active.media.close().catch(() => {});
-    this.callbacks.onState(active.peer?.id.toString(), 'uncertain');
+    this.callbacks.onState(active.peer?.id.toString(), 'uncertain', reason);
     if (active.peer) void this.discard(active);
   }
 }

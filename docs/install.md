@@ -1,10 +1,12 @@
 # Install and operate
 
-VoxDock is a source alpha for one self-hosted operator. These instructions distinguish a paused local control service from enabling a real platform and paid Live session. Real-call acceptance is still open; see [acceptance](acceptance.md).
+Install VoxDock for one self-hosted operator. Start with a paused local service, then configure Live, a backend and a calling account. Review [known limitations](limitations.md) before enabling real calls.
+
+Choose [source installation](#source-service) or a [local Docker build](#local-docker-build). For guided configuration and account linking, use the [operator console](console.md); the [operations guide](operations.md) covers CLI controls.
 
 ## Source service
 
-Use Node 24, pnpm 10.17.1 and a local filesystem for SQLite. Install FFmpeg on `PATH` before using Telegram audio; it converts 48 kHz platform PCM to/from 24 kHz Live PCM. Install dependencies with `pnpm install --frozen-lockfile`, then run `pnpm typecheck` and `pnpm test`.
+Use Node 24, pnpm 10.17.1 and a local filesystem for SQLite. Install FFmpeg on `PATH` before using Telegram audio; it converts 48 kHz platform PCM to/from 24 kHz Live PCM. Install dependencies with `pnpm install --frozen-lockfile`, then run `pnpm build` to build the console. Contributor checks are documented in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ```sh
 pnpm voxdock init ./local
@@ -39,7 +41,7 @@ Copy fields from [the Telegram example](../config/telegram.example.json) into yo
 
 Use the explicit provisioning utility described in [platforms](platforms.md); service startup never prompts for phone codes. Verify the account and target before enabling calls. `account_ref` and `principal_ref` are local references, not voice authentication. Run your backend independently; the [example backend](backend.md) is a local simulation and binds loopback.
 
-After configuration and backend setup, enable calling in the file, rerun `doctor`, start the service and inspect `status`/`targets`. Availability only establishes loaded/configured components, not a completed phone or Live acceptance test. A real outbound command is explicit:
+After configuration and backend setup, enable calling in the file, rerun `doctor`, start the service and inspect `status`/`targets`. Readiness reports loaded and configured components; it does not establish handset interoperability. A real outbound command is explicit:
 
 ```sh
 pnpm voxdock call --config ./local/voxdock.config.json \
@@ -68,11 +70,11 @@ The service listens inside the container on `0.0.0.0:8787`, while the host publi
 
 For a real container configuration, keep `/data`, the container listen address and relative `/config` secret references. Set an accessible private backend URL; container loopback is not the host's example backend. `TELEGRAM_API_ID`, `TELEGRAM_TARGET_ID` and `WHATSAPP_TARGET_PHONE` are forwarded from the operator environment. A configured channel may still be unavailable if Linux native loading or authorization fails.
 
-On SELinux-enforcing hosts, apply container labels to the dedicated bind mounts in a deployment override: `:z` for a configuration/secret shared by both containers, and `:Z` for each private data directory. Keep labels scoped to application files. Store a systemd `EnvironmentFile` under `/etc/voxdock/` with restricted permissions and restore its normal `/etc` context. An environment file under an arbitrary `/srv` directory labeled `var_t` was rejected by systemd on the tested Rocky Linux host; moving it to `/etc` with `etc_t` resolved startup without disabling SELinux. Review directory ownership against the configured container UID before starting.
+On SELinux-enforcing hosts, apply container labels to the dedicated bind mounts in a deployment override: `:z` for a configuration/secret shared by both containers, and `:Z` for each private data directory. Keep labels scoped to application files. Store a systemd `EnvironmentFile` under `/etc/voxdock/` with restricted permissions and restore its normal `/etc` context. Ensure systemd can read the file under the host’s SELinux policy; keep SELinux enabled and avoid broad relabeling of unrelated directories. Review directory ownership against the configured container UID before starting.
 
 ## Optional WaCalls sidecar
 
-WhatsApp uses the same call coordinator as Telegram, with a paired WaCalls account and 16 kHz PCM. The implementation remains experimental until real-call acceptance. Running this sidecar alone does not enable calling.
+WhatsApp uses the same call coordinator as Telegram, with a paired WaCalls account and 16 kHz PCM. Running this sidecar alone does not enable calling.
 
 `Dockerfile.wacalls` builds the pinned upstream plus the [media patch](wacalls-media.md) and its pairing UI from source. It preserves upstream and MLow notices. It is independent of the bridge image. Set up directories and a random shared media secret before selecting the profile:
 
@@ -83,7 +85,7 @@ docker compose --profile whatsapp build wacalls
 docker compose --profile whatsapp up wacalls
 ```
 
-The `whatsapp` profile publishes no WaCalls port. Its upstream REST API has no authentication; the new media-token and WebSocket endpoints are authenticated. Use `http://wacalls:8080` only within the trusted Compose network. The same secret must be available to the Node client and WaCalls through their configured files. Do not reuse the control or backend token.
+The `whatsapp` profile publishes no WaCalls port. Its upstream REST API has no authentication; the added media-token and WebSocket endpoints are authenticated. Use `http://wacalls:8080` only within the trusted Compose network. The same secret must be available to the Node client and WaCalls through their configured files. Do not reuse the control or backend token.
 
 For explicit temporary pairing access, add the loopback-only override:
 
@@ -98,17 +100,17 @@ Copy the [WhatsApp configuration example](../config/whatsapp.example.json) into 
 
 ## Upgrade, restore and rollback
 
-There is no released migration or downgrade compatibility promise yet. Test changes against a private copy before replacing an operator instance. Keep the source commit, lockfile and locally built image IDs with each backup.
+There is no migration or downgrade compatibility promise. Test changes against a private copy before replacing an operator instance. Keep the source commit, lockfile and locally built image IDs with each backup.
 
 1. Pause admission, end any active call and independently verify platform termination. Stop the bridge, example backend and WaCalls writers before copying their data. Preserve the complete data directories, configuration, secrets and platform sessions with restrictive permissions; do not copy only the main file from a live SQLite WAL database.
 2. Build the selected source commit in a separate checkout using the frozen lockfile, or build fresh images. Read the change's schema and dependency notes. Do not overwrite the backup or reuse dependency directories from another version.
 3. Restore into a separate instance directory and set `calling.enabled` to `false` **before its first start**. Never run the original and restored instance with the same platform account simultaneously. Run offline `doctor`, inspect stored calls and reconcile uncertain external state. The startup recovery path pauses interrupted calls; the disabled configuration is the restore procedure's admission guard even when all saved calls were terminal.
 4. Verify configuration, backend receipts, record counts and platform account readiness before explicitly enabling and resuming. To roll back, restore the matching complete pre-upgrade snapshot and old source/image; do not run an old binary against a database changed by a newer version. Retain original command/result IDs and backend deduplication records so callback retries cannot create duplicate work.
 
-Real account backup/restore and version upgrades remain acceptance tasks. Automated restart and process-lock checks are narrower evidence.
+See [known limitations](limitations.md) for the validation status of real-account restore and upgrades.
 
 ## Distribution and support
 
-These definitions download native dependencies for the operator's local build. NTgCalls is LGPL-3.0-only and its npm artifact's metadata does not constitute a complete source/notice bundle. FFmpeg and transitive native libraries have separate obligations. Do not infer that the root MIT license covers the resulting image. A published binary/image release requires a corresponding-source and notice inventory, immutable dependency/image provenance and applicable license review. Those release gates are not completed here.
+These definitions download native dependencies for the operator's local build. NTgCalls is LGPL-3.0-only and its npm artifact's metadata does not constitute a complete source/notice bundle. FFmpeg and transitive native libraries have separate obligations. Do not infer that the root MIT license covers the resulting image. A published binary/image release requires a corresponding-source and notice inventory, immutable dependency/image provenance and applicable license review. This release distributes source only; it does not provide a binary/image redistribution inventory.
 
-When reporting an issue, include the source commit, OS/architecture, Node version, sanitized `doctor` output and the observed call state. Do not attach tokens, account sessions, QR codes, raw audio or private transcripts. See [acceptance](acceptance.md) for the difference between local test coverage and unverified real-world behavior.
+When reporting an issue, include the source commit, OS/architecture, Node version, sanitized `doctor` output and the observed call state. Do not attach tokens, account sessions, QR codes, raw audio or private transcripts. See [known limitations](limitations.md) for current platform and operational boundaries.

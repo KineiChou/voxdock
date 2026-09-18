@@ -1,26 +1,27 @@
 # Native platform adapters
 
-Evidence dates: 2026-09-16–17. A WhatsApp account paired on the ARM64 server. After a first outgoing call ended with `audio_failed`, the pacing fix sustained normal conversation to a 120-second limit; the phone still displayed “Call failed” on termination. A callback exposed a device-qualified LID parsing defect, now fixed in code and awaiting handset retest. Native test results below were originally account-free; see [phone acceptance](acceptance.md#two-minute-retest-and-incoming-rejection-2026-09-17) for the limits of the real-call evidence. Telegram handset calls remain unverified.
+Telegram uses an isolated teleproto/NTgCalls worker. WhatsApp uses the pinned WaCalls sidecar with controlled media and identity patches. See [known limitations](limitations.md) for platform interoperability and validation boundaries.
 
 ## Locked upstreams
 
-| Component | Version / source | Local evidence |
+| Component | Version / source | Role |
 | --- | --- | --- |
-| NTgCalls | npm `3.0.0-rc03`, source `4115768087d0b1cefdd84407293ca5c00a903f1e` | Official native package loads, constructs, and returns an empty calls map on Node 24.21.0 / macOS arm64 |
-| teleproto | npm `1.229.0`, source `9b0ebd11151af3e362842b826e704e97ab398fa5` | Public phone request/accept/confirm/discard/signaling exports verified on Node 24 |
-| WaCalls | `edeb31f0427aba896639db503153b777a405eccf` | Go 1.26.4 build succeeds for macOS arm64 and Linux amd64, CGO disabled for Linux |
+| NTgCalls | npm `3.0.0-rc03`, source `4115768087d0b1cefdd84407293ca5c00a903f1e` | Native Telegram call media |
+| teleproto | npm `1.229.0`, source `9b0ebd11151af3e362842b826e704e97ab398fa5` | Telegram account and call signaling |
+| WaCalls | `edeb31f0427aba896639db503153b777a405eccf` | WhatsApp account, signaling and media sidecar |
 
-NTgCalls native loading, byte ABI, external PCM input and cleanup also pass on Linux x64 Node 24, both on the CI host and inside the Debian bridge image. The WaCalls image starts with an empty account store in Linux CI. NTgCalls remains a prerelease dependency; these account-free checks do not establish real call negotiation or handset audio. See [acceptance evidence](acceptance.md).
+NTgCalls is a prerelease dependency. Use the pinned artifact's generated types and
+native ABI when changing the integration.
 
 ### MTProto selection
 
-The initially considered GramJS package `telegram@2.26.22` is explicitly deprecated on npm and directs users to teleproto. Its maintained fork describes independent development and exposes the needed phone schema. Use teleproto for new implementation, rather than building on the archived client. Schema/export checks do not establish server or account compatibility. The selected NTgCalls npm artifact differs from the earlier source snapshot; use the installed artifact's generated types as the integration contract.
+The Telegram adapter uses teleproto for MTProto account and phone APIs. NTgCalls owns the native call media boundary.
 
 Sources: [NTgCalls](https://github.com/pytgcalls/ntgcalls), [teleproto](https://github.com/sanyok12345/teleproto), [WaCalls fixed source](https://github.com/JotaDev66/WaCalls/tree/edeb31f0427aba896639db503153b777a405eccf).
 
 ## Implemented boundaries
 
-Telegram identity validation accepts only stable positive int64 user IDs and requires distinct caller and target accounts. The signaling pipe binds one user ID to one platform call ID and access hash, bounds outbound signaling, copies native callback buffers, isolates late/wrong-call events and reports transport failure once. It uses actual NTgCalls callback/method names; account provisioning, fixed-target outbound DH negotiation, admitted inbound acceptance, discard and PCM media setup are now implemented against the pinned APIs. Mocked protocol fixtures verify sequencing; handset behavior remains unverified.
+Telegram identity validation accepts only stable positive int64 user IDs and requires distinct caller and target accounts. The signaling pipe binds one user ID to one platform call ID and access hash, bounds outbound signaling, copies native callback buffers, isolates late/wrong-call events and reports transport failure once. It uses actual NTgCalls callback/method names; account provisioning, fixed-target outbound DH negotiation, admitted inbound acceptance, discard and PCM media setup use the pinned APIs.
 
 WhatsApp control uses the pinned upstream's actual HTTP routes, fixed session/client and target identity, no recording and no automatic dial retry. Its fixed HTTP(S) origin comes only from trusted operator configuration and rejects embedded credentials, URL paths, queries, fragments and redirects. Upstream has no authentication; this client does not add authentication. The upstream port must be restricted to trusted private processes or an authenticated proxy. Never accept the origin from a call request or model output.
 
@@ -38,11 +39,9 @@ After `pnpm install --frozen-lockfile`, run `node packages/telegram/scripts/nati
 
 For WaCalls, checkout the fixed commit and run `go build ./cmd/server`. Linux build: `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/server`. Go 1.26.4 is required by upstream; a recent Go installation can fetch the toolchain automatically. Builds require downloading the pinned `go.mod`/`go.sum` dependencies.
 
-Remaining account/device evidence: login/session persistence, target resolution, private call negotiation, handset ringing/answer/rejection, actual media timing and duplex audio, interruption, and cleanup/crash recovery with real platform state. Linux process and synthetic/native PCM checks already pass; they do not substitute for these real-world scenarios.
+## Native byte ABI
 
-## Pinned native byte ABI defect
-
-The rc03 generated TypeScript declarations label byte inputs as `Buffer`, but the native `JsReader<std::vector<T>>` specialization requires JavaScript arrays because `bytes::binary` aliases a vector. Passing Buffer to `initExchange` or `sendExternalFrame` fails with `An array was expected`; this was reproduced locally. `TelegramNativeBinding` converts byte inputs explicitly at that boundary, while retaining Buffer application interfaces. Outgoing `initExchange` requires null (no hash); an empty byte sequence instead selects the incoming-key path. The wrapper also handles exchange keys, signaling and relay peer tags. Source: [pinned addon template](https://github.com/pytgcalls/ntgcalls/blob/4115768087d0b1cefdd84407293ca5c00a903f1e/targets/node/addon.cc.tpl). Native smoke validates the correction; a dependency upgrade must repeat this ABI check.
+The rc03 generated TypeScript declarations label byte inputs as `Buffer`, but the native `JsReader<std::vector<T>>` specialization requires JavaScript arrays because `bytes::binary` aliases a vector. Passing Buffer to `initExchange` or `sendExternalFrame` fails with `An array was expected`. `TelegramNativeBinding` converts byte inputs explicitly at that boundary, while retaining Buffer application interfaces. Outgoing `initExchange` requires null (no hash); an empty byte sequence instead selects the incoming-key path. The wrapper also handles exchange keys, signaling and relay peer tags. Source: [pinned addon template](https://github.com/pytgcalls/ntgcalls/blob/4115768087d0b1cefdd84407293ca5c00a903f1e/targets/node/addon.cc.tpl). Repeat the native ABI check when upgrading the dependency.
 
 ## Account tooling and driver
 
@@ -50,6 +49,4 @@ The rc03 generated TypeScript declarations label byte inputs as `Buffer`, but th
 
 `TelegramDriver` accepts an authorized client, configured account/target IDs and state/audio/incoming callbacks. It exposes `dial(targetId, signal)`, `accept(ref, signal)`, `reject(ref)`, `end(ref)`, `writeAudio(ref, pcm)` and `close()`. Caller must reserve durable global capacity before dial/accept. Native audio is 48 kHz mono PCM16LE in 10 ms (960-byte) frames; the host supplies pacing and bounded queues. Platform `connected` and `onAudioReady` are separate. Incoming offers only produce callbacks; the manager decides admission. Unknown, foreign or video callers cannot be accepted. Platform uncertainty preserves the active reservation, and terminal discard evidence is required before admitting another call.
 
-Fixture/identity/transport tests and strict TypeScript checks pass. The pinned WaCalls patch also passes server/core tests and race checks. Native account-free create/external input/stop and byte ABI smoke pass on macOS arm64 and Linux x64 Node 24.21.0. Exact runs are linked in [acceptance](acceptance.md); no platform login, actual negotiation or audio quality claim follows from them.
-
-Failure cleanup attempts one correlated platform discard when a provider reference exists; native cleanup failure does not suppress that attempt. The reservation clears only with terminal platform evidence and successful native cleanup. Updates remain subscribed during explicit close. Tests cover stale same-target updates arriving before the dial response and failed native connection cleanup.
+Failure cleanup attempts one correlated platform discard when a provider reference exists; native cleanup failure does not suppress that attempt. The reservation clears only with terminal platform evidence and successful native cleanup. Updates remain subscribed during explicit close.

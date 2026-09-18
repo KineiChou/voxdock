@@ -50,7 +50,8 @@ export async function connectChild(child: ChildProcess, options: TelegramProcess
     }
     const ref = typeof message.ref === 'string' && message.ref.length <= 200 ? message.ref : undefined;
     if (message.type === 'state' && ['dialing','ringing','connected','ending','ended','uncertain'].includes(String(message.state))) {
-      callbacks.state(ref, message.state as Parameters<VoiceEvents['state']>[1]);
+      const reason = message.state === 'uncertain' && message.reason === 'telegram_media_connect_failed' ? message.reason : undefined;
+      callbacks.state(ref, message.state as Parameters<VoiceEvents['state']>[1], reason);
     } else if (message.type === 'audio' && ref && Buffer.isBuffer(message.pcm) && message.pcm.length === 960) callbacks.audio(ref, message.pcm);
     else if (message.type === 'audioReady' && ref) callbacks.audioReady(ref);
     else if (message.type === 'incoming' && ref && typeof message.allowed === 'boolean') callbacks.incoming(ref, message.allowed);

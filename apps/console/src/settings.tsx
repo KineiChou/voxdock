@@ -43,10 +43,22 @@ export function Settings() {
             ["Voice", options.data?.voices.find((choice) => choice.value === s.live.voice)?.label ?? s.live.voice],
             ["Preferred language", options.data?.languages.find((choice) => choice.value === s.live.language)?.label ?? s.live.language],
             ["Model", s.live.model],
+            ["Custom voice", s.live.custom_voice_id || "Not configured"],
+            ["Opening greeting", s.live.greeting_enabled ? "Enabled" : "Disabled"],
+            ["Conversation instructions", s.live.instructions ? "Configured" : "Default"],
             [
               "Live API key",
               view.credentials.live_api_key ? "Configured" : "Not configured",
             ],
+          ],
+          delegation: [
+            ["Delegated tasks", options.data?.delegation_modes.find((choice) => choice.value === s.live.delegation)?.label ?? s.live.delegation],
+            ...(s.live.delegation === "responses" ? [
+              ["Responses model", s.live.responses.model],
+              ["Web search", s.live.responses.web_search ? (s.live.responses.tool_choice === "none" ? "Configured · tool use disabled" : "Enabled") : "Disabled"],
+              ["Reasoning effort", s.live.responses.reasoning_effort],
+              ["Maximum output tokens", String(s.live.responses.max_output_tokens)],
+            ] as Array<[string, string]> : [["Tools", "Managed by your external agent"]] as Array<[string, string]>),
           ],
           calling: [
             ["Calling", s.calling.enabled ? "Enabled" : "Disabled"],

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Alert, Button, Select } from "@mantine/core";
+import { Alert, Button, Select, Switch, Textarea, TextInput } from "@mantine/core";
 import type { ConsoleSettingsOptions } from "../../../packages/contracts/src/console-configuration";
 import { useResource } from "./api";
 import { Fields, Loading } from "./shared";
@@ -7,7 +7,7 @@ import type { useConfigurationForm } from "./configuration-form";
 
 type Choice = { value: string; label: string };
 
-function SearchableSetting({
+export function SearchableSetting({
   label,
   value,
   choices,
@@ -102,6 +102,26 @@ export function VoiceFields({
           </>
         )
       )}
+      <TextInput
+        label="Custom voice ID"
+        description="Optional voice_… ID. When set, it replaces the selected voice."
+        value={live.custom_voice_id}
+        maxLength={80}
+        onChange={(event) => form.update("live", { ...live, custom_voice_id: event.currentTarget.value })}
+      />
+      <Switch
+        label="Greet when the call connects"
+        checked={live.greeting_enabled}
+        onChange={(event) => form.update("live", { ...live, greeting_enabled: event.currentTarget.checked })}
+      />
+      <Textarea
+        label="Conversation instructions"
+        description="Describe the tone, speaking style, and when to ask your agent for help."
+        value={live.instructions}
+        maxLength={16000}
+        autosize minRows={3} maxRows={8}
+        onChange={(event) => form.update("live", { ...live, instructions: event.currentTarget.value })}
+      />
       {form.secret("live_api_key", "Live API key")}
     </>
   );

@@ -7,13 +7,15 @@ VoxDock includes a responsive web console at `/console/`. It uses the same bridg
 - **Overview:** last 1, 7 or 30 local calendar days; call counts, observed connection rate, settled Live time, delegation outcomes, daily trends, platform distribution, today's budget, active calls and calls requiring review. The homepage displays service status; configured calling stays available without a Start button.
 - **Calls:** server-filtered, cursor-paginated records; lifecycle events, latest delegation results, server-grouped conversation text and JSON/HTML export. An end request is followed by polling the recorded state; acceptance is not proof of termination.
 - **Connections:** account authentication and calling readiness, guided Telegram and WhatsApp setup. Telegram starts with application credentials, then QR or phone/code/two-step login, followed by receiving-account verification using a message code or incoming call. WhatsApp setup links the calling account with a QR code, then verifies a separate receiving account by a message code or incoming call and explicit number confirmation. Pairing can be cancelled and accounts disconnected. An authenticated account can remain disabled for calls.
-- **Settings:** review grouped summaries for voice and conversation, calling limits, agent connection, data retention, and console account/access. Select **Configure** on a group to edit it, then **Save and apply** or **Cancel**. Voice and preferred language have searchable choices. Explicit maintenance controls live here, with eligibility supplied by the backend.
+- **Settings:** review grouped summaries for voice and conversation, delegation and tools, calling limits, agent connection, data retention, and console account/access. Select **Configure** on a group to edit it, then **Save and apply** or **Cancel**. Voice, preferred language and delegated model have searchable choices. Explicit maintenance controls live here, with eligibility supplied by the backend.
 
 Scoped Agent credentials and MCP remain separate work. The existing fixed-target `POST /v1/calls` and CLI `call` remain available for authorized integrations. Task routing and long-term memory stay in the business backend.
 
 Opening a configuration dialog fetches the latest saved revision. Cancel discards its draft; a successful save closes the dialog and updates the summary. Changes made elsewhere cause a conflict instead of overwriting newer settings: reload the saved settings and review the draft again. Credentials remain write-only, and account changes require the current password. Deployment-owned fields appear as text, not editable controls.
 
-Voice and language choices come from the backend, shared with the CLI. The voice suggestions use the [documented GPT-Live default and additional voices](https://developers.openai.com/api/docs/guides/live-conversations#voice-options), checked on 2026-09-17. The catalog is not exhaustive; an existing unlisted value stays visible, and custom values remain available. Language choices are common conversation preferences, not a guarantee of model language coverage. Saving a voice value does not verify provider access or audio quality.
+Voice, language, model and delegation choices come from the backend, shared with the CLI. The voice suggestions use the [documented GPT-Live voices](https://developers.openai.com/api/docs/guides/live-conversations#voice-options). The catalog is not exhaustive; an existing unlisted value stays visible, and custom values remain available. Language choices are common conversation preferences, not a guarantee of model language coverage. Saving a voice/model value does not verify provider access or audio quality.
+
+Voice and conversation also configures custom voice IDs, speaking instructions and automatic greetings. Delegation and tools selects **External agent** or **OpenAI Responses**, with optional web search and advanced reasoning/output preferences for the latter. Responses-only fields are hidden in client mode. The backend connection is still required in both modes for context and call events. See the [configuration guide](configuration.md) for defaults, supported capabilities and API/CLI updates.
 
 ## Enable the console
 
@@ -78,7 +80,7 @@ Authenticated browser calls use `/admin/v1`; operator CLI projections use `/v1/c
 | `GET /calls/{id}/transcripts` | Insertion-order cursor, limit 1–200, retention availability |
 | `GET /calls/{id}/export` | `format=json\|html`; redacted by default, `redact=false` explicitly includes private records |
 | `GET /connections`, `GET /settings` | Account authentication, readiness and applied status |
-| `GET /settings/options` | Voice/language choices as `{ value, label }[]`, plus `allow_custom_voice` and `allow_custom_language` |
+| `GET /settings/options` | Voice/language/model/delegation and reasoning/tool choices as `{ value, label }[]`, with custom-value flags |
 | `GET /settings/configuration` | Revision, editable settings, credential-presence flags and deployment fields |
 | `PUT /settings/configuration` | Complete `{ expected_revision, settings, secrets? }`; validate and apply synchronously |
 | `POST /connections/telegram/login` | `{ phone }`, international format |

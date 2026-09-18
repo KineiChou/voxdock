@@ -4,7 +4,7 @@ import type { BackendContext, CallEvent, CallStatus, Channel, Delegation, Delega
 import type { LiveConfig, LiveEvent } from '@voxdock/live';
 export type TargetConfig = BridgeConfig['targets'][number];
 export interface VoiceEvents {
-  state(ref: string | undefined, state: 'dialing' | 'ringing' | 'connected' | 'ending' | 'ended' | 'uncertain'): void;
+  state(ref: string | undefined, state: 'dialing' | 'ringing' | 'connected' | 'ending' | 'ended' | 'uncertain', reason?: 'telegram_media_connect_failed'): void;
   audio(ref: string, pcm: Buffer): void;
   audioReady(ref: string): void;
   incoming(ref: string, allowed: boolean): void;

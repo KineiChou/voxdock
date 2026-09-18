@@ -24,15 +24,13 @@ All challenge responses use `Cache-Control: no-store`. QR content is returned on
 
 The flow has `id`, `channel`, `state`, `expires_at`, optional `qr`, optional `qr_expires_at`, and optional sanitized `error`. The QR expiry is separate from the overall challenge deadline. Terminal states are connected, cancelled, expired, or failed. Polling a flow never starts a login. Restart loses pending challenges; calling remains controlled by the durable pause and runtime reconciliation rules.
 
-## Validation and limits
+## Readiness and recovery
 
 For a saved WhatsApp account, start WaCalls and wait for the configured session to be paired and open before starting the bridge. Container health alone does not establish account readiness. Runtime initialization checks once; a later platform reconnect does not automatically recreate the driver. Recover while paused and with no active or uncertain call by restarting the bridge after checking the account, or by saving and applying the reviewed configuration in Settings. Normal management recovery releases its temporary hold automatically; end an explicit maintenance pause in Settings only after readiness is restored.
 
-Fake Telegram callbacks cover code/2FA, exclusive lease ownership, cancellation, and stale submissions. Fake sidecar requests cover fixed routing, QR expiry, existing pairing reuse, and uncertain cleanup. Fastify injection covers strict request bodies and non-cacheable results. Controlled Go tests cover read-only status, preserved paired devices, and disconnect state. No real account or paid Live acceptance is claimed. Browser refresh does not restore a pending challenge identifier; it expires automatically.
+## Cancellation and liveness
 
-## Cancellation and liveness correction
-
-A connect request can finish after cancellation is requested. Cancellation now drains its pending connect request before disconnecting. A timed-out or failed mutation has an unknown outcome, so the lifecycle lease is released as unsafe and calling remains blocked. Shutdown also waits for a terminal flow's pending lifecycle release. These cases have deterministic fake-transport regression tests.
+A connect request can finish after cancellation is requested. Cancellation drains its pending connect request before disconnecting. A timed-out or failed mutation has an unknown outcome, so the lifecycle lease is released as unsafe and calling remains blocked. Shutdown also waits for a terminal flow's pending lifecycle release.
 
 Sidecar status reads have a three-second deadline; mutations have a ten-second deadline. All sidecar responses are limited to 64 KiB. Account-status reads are nonmutating and unknown status is reported disconnected. WhatsApp open status requires a currently connected and logged-in socket. Disconnect cancels and joins the QR worker before publishing the final disconnected state, preventing a late QR from reappearing. API errors use fixed codes suitable for frontend translation.
 
@@ -42,7 +40,7 @@ Refreshing QR clears the previous code immediately, renews the challenge deadlin
 
 QR login and receiving-number verification are separate flows. The QR flow must reach its own terminal state before its lease is released and verification can start; an account-status response alone does not complete it. The server generates internal application references and exposes phone numbers for review. A random single-use code or an incoming call identifies one frozen candidate; the operator must explicitly confirm that number within the displayed window. Existing target identifiers and principal references survive replacement, and the old target stays committed until verified runtime installation succeeds. Self-account candidates are rejected.
 
-The [sidecar observer](whatsapp-target-pairing.md) never stores general message content or accepts a verification call. It uses the provider's canonical phone mapping, not a browser-supplied address. Pending flows are ephemeral; refresh/navigation does not restore their IDs. They expire automatically, and uncertain cancellation leaves calling blocked for recovery. Full handset QR/message/call acceptance still requires testing.
+The [sidecar observer](whatsapp-target-pairing.md) never stores general message content or accepts a verification call. It uses the provider's canonical phone mapping, not a browser-supplied address. Pending flows are ephemeral; refresh/navigation does not restore their IDs. They expire automatically, and uncertain cancellation leaves calling blocked for recovery. See [known limitations](limitations.md) for handset validation boundaries.
 
 ## Unlink transaction
 

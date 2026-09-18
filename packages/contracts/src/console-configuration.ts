@@ -1,4 +1,5 @@
 import { Type, type Static } from '@sinclair/typebox';
+import { LivePreferencesSchema } from './live-settings.js';
 
 const strict = { additionalProperties: false };
 const settingOption = Type.Object({ value: Type.String(), label: Type.String() }, strict);
@@ -7,6 +8,13 @@ export const ConsoleSettingsOptionsSchema = Type.Object({
   languages: Type.Array(settingOption),
   allow_custom_voice: Type.Boolean(),
   allow_custom_language: Type.Boolean(),
+  delegation_modes: Type.Array(settingOption),
+  responses_models: Type.Array(settingOption),
+  allow_custom_responses_model: Type.Boolean(),
+  reasoning_efforts: Type.Array(settingOption),
+  service_tiers: Type.Array(settingOption),
+  verbosities: Type.Array(settingOption),
+  tool_choices: Type.Array(settingOption),
 }, strict);
 export type ConsoleSettingsOptions = Static<typeof ConsoleSettingsOptionsSchema>;
 const ref = Type.String({ minLength: 1, maxLength: 200, pattern: '^[A-Za-z0-9][A-Za-z0-9_.:/-]*$' });
@@ -18,7 +26,7 @@ export const ConsoleConfigurationSchema = Type.Object({
     ring_timeout_seconds: Type.Integer({ minimum: 1, maximum: 120 }),
     max_request_ttl_seconds: Type.Integer({ minimum: 1, maximum: 3600 }),
   }, strict),
-  live: Type.Object({ model: Type.Literal('gpt-live-1'), voice: Type.String({ minLength: 1, maxLength: 80 }), language: Type.String({ minLength: 2, maxLength: 80 }) }, strict),
+  live: LivePreferencesSchema,
   backend: Type.Union([Type.Null(), Type.Object({ id: ref, base_url: Type.String({ minLength: 1, maxLength: 2048 }), ack_timeout_ms: Type.Integer({ minimum: 100, maximum: 30000 }) }, strict)]),
   records: Type.Object({ transcript_retention_days: Type.Integer({ minimum: 0, maximum: 30 }), metadata_retention_days: Type.Integer({ minimum: 1, maximum: 365 }) }, strict),
   telegram: Type.Object({ enabled: Type.Boolean(), account_ref: ref, api_id: Type.Union([Type.Null(), Type.Integer({ minimum: 1, maximum: 2147483647 })]) }, strict),

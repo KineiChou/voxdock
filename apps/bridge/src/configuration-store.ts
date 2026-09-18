@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Value } from '@sinclair/typebox/value';
 import { parseConfig, type BridgeConfig } from '@voxdock/config';
-import { ConsoleConfigurationSchema, ConsoleConfigurationUpdateSchema, type ConfigurationSecret, type ConsoleConfiguration, type ConsoleConfigurationUpdate, type ConsoleConfigurationView } from '@voxdock/contracts';
+import { ConsoleConfigurationSchema, ConsoleConfigurationUpdateSchema, LivePreferencesSchema, livePreferencesValid, type ConfigurationSecret, type ConsoleConfiguration, type ConsoleConfigurationUpdate, type ConsoleConfigurationView } from '@voxdock/contracts';
 import { DomainError } from '@voxdock/core';
 import { readPrivateText } from './cli-files.js';
 import { writePrivateFile } from './private-files.js';
@@ -20,7 +20,7 @@ function fromConfig(config: BridgeConfig): ConsoleConfiguration {
   const apiId = tg.api_id ?? Number(tg.api_id_env ? process.env[tg.api_id_env] : undefined);
   return {
     calling: { enabled: config.calling.enabled, max_call_seconds: config.calling.max_call_seconds, daily_live_seconds: config.calling.daily_live_seconds, ring_timeout_seconds: config.calling.ring_timeout_seconds, max_request_ttl_seconds: config.calling.max_request_ttl_seconds },
-    live: { model: config.live.model, voice: config.live.voice, language: config.live.language },
+    live: Value.Clean(LivePreferencesSchema, structuredClone(config.live)) as ConsoleConfiguration['live'],
     backend: config.backend ? { id: config.backend.id, base_url: config.backend.base_url, ack_timeout_ms: config.backend.ack_timeout_ms } : null,
     records: { transcript_retention_days: config.records.transcript_retention_days, metadata_retention_days: config.records.metadata_retention_days },
     telegram: { enabled: tg.enabled, account_ref: tg.account_ref ?? 'telegram-owner', api_id: Number.isSafeInteger(apiId) && apiId > 0 ? apiId : null },
@@ -43,7 +43,8 @@ export class ConfigurationStore {
     if (existsSync(this.filename)) {
       const text = readPrivateText(this.filename);
       const parsed = JSON.parse(text) as ConfigurationState;
-      if (!Number.isSafeInteger(parsed.revision) || parsed.revision < 1 || !Value.Check(ConsoleConfigurationSchema, parsed.settings) || !parsed.secrets || typeof parsed.secrets !== 'object' || Object.entries(parsed.secrets).some(([slot, path]) => !slots.includes(slot as ConfigurationSecret) || typeof path !== 'string' || !/^[-a-z_0-9.]+$/.test(path))) throw new Error('invalid_managed_configuration');
+      parsed.settings = Value.Default(ConsoleConfigurationSchema, parsed.settings) as ConsoleConfiguration;
+      if (!Number.isSafeInteger(parsed.revision) || parsed.revision < 1 || !Value.Check(ConsoleConfigurationSchema, parsed.settings) || !livePreferencesValid(parsed.settings.live) || !parsed.secrets || typeof parsed.secrets !== 'object' || Object.entries(parsed.secrets).some(([slot, path]) => !slots.includes(slot as ConfigurationSecret) || typeof path !== 'string' || !/^[-a-z_0-9.]+$/.test(path))) throw new Error('invalid_managed_configuration');
       this.state = parsed;
     }
   }
@@ -93,7 +94,8 @@ export class ConfigurationStore {
     return { revision: this.state.revision, settings: structuredClone(this.state.settings), credentials, deployment: { whatsapp_available: !!config.channels.whatsapp.endpoint && !!config.channels.whatsapp.media_token_file, whatsapp_endpoint: config.channels.whatsapp.endpoint ?? null, timezone: config.timezone }, applying };
   }
   prepare(input: ConsoleConfigurationUpdate): { config: BridgeConfig; commit: () => void } {
-    if (!Value.Check(ConsoleConfigurationUpdateSchema, input)) throw new DomainError('invalid_configuration', 400);
+    input = Value.Default(ConsoleConfigurationUpdateSchema, structuredClone(input)) as ConsoleConfigurationUpdate;
+    if (!Value.Check(ConsoleConfigurationUpdateSchema, input) || !livePreferencesValid(input.settings.live)) throw new DomainError('invalid_configuration', 400);
     if (input.expected_revision !== this.state.revision) throw new DomainError('revision_conflict', 409);
     const next: ConfigurationState = { revision: this.state.revision + 1, settings: structuredClone(input.settings), secrets: { ...this.state.secrets } };
     for (const slot of slots) {

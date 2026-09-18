@@ -1,0 +1,59 @@
+// Regenerate with: node docs/assets/architecture.mjs
+// Plain SVG keeps the diagram readable on GitHub without fonts, scripts or external assets.
+import { writeFileSync } from 'node:fs';
+const out = [];
+const esc = s => s.replaceAll('&', '&amp;').replaceAll('<', '&lt;');
+const text = (x, y, value, size = 20, fill = '#475569', weight = 400) => out.push(`<text x="${x}" y="${y}" font-size="${size}" fill="${fill}" font-weight="${weight}">${esc(value)}</text>`);
+const box = (x, y, w, h, title, lines, color = '#2563eb') => {
+  out.push(`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="16" fill="#fff" stroke="#cbd5e1"/><rect x="${x}" y="${y + 18}" width="4" height="30" rx="2" fill="${color}"/>`);
+  text(x + 24, y + 43, title, 24, '#0f172a', 650);
+  lines.forEach((line, i) => text(x + 24, y + 78 + i * 28, line));
+};
+const edge = (d, color = '#64748b', both = false, dashed = false) => out.push(`<path d="${d}" fill="none" stroke="${color}" stroke-width="2.5" ${dashed ? 'stroke-dasharray="7 6"' : ''} marker-end="url(#${color === '#0d9488' ? 'audio' : color === '#7c3aed' ? 'business' : 'control'})" ${both ? `marker-start="url(#${color === '#0d9488' ? 'audio' : 'control'})"` : ''}/>`);
+out.push(`<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1260" viewBox="0 0 1440 1260" role="img" aria-labelledby="title desc"><title id="title">VoxDock architecture</title><desc id="desc">Operator console, CLI and API use authenticated control and SQLite admission. A shared runtime connects Telegram through an isolated teleproto and NTgCalls worker, or WhatsApp through a private WaCalls sidecar. Continuous PCM flows to GPT-Live-1 over a primary WebSocket. Client delegation reaches an external HTTP backend through the runtime, with signed events and durable result callbacks. Alternatively, Responses delegation executes through OpenAI with optional web search; the backend still supplies context and receives events. Raw audio stays in memory.</desc><defs>`);
+for (const [name, color] of [['control', '#64748b'], ['audio', '#0d9488'], ['business', '#7c3aed']]) out.push(`<marker id="${name}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 1 1 L 9 5 L 1 9 z" fill="${color}"/></marker>`);
+out.push(`</defs><g font-family="Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"><rect width="1440" height="1260" rx="24" fill="#f8fafc"/>`);
+text(40, 54, 'VoxDock', 34, '#0f172a', 750);
+text(40, 88, 'A phone conversation connected to your agent backend', 22);
+box(40, 118, 970, 113, 'Operator', ['Web console  ·  CLI  ·  authenticated HTTP API']);
+text(1050, 157, 'CONTROL & STATE', 16, '#64748b', 650);
+text(1050, 185, 'CONTINUOUS AUDIO', 16, '#0d9488', 650);
+text(1050, 213, 'BUSINESS MESSAGES', 16, '#7c3aed', 650);
+out.push('<rect x="24" y="270" width="1000" height="734" rx="24" fill="#eff6ff" stroke="#bfdbfe"/>');
+text(48, 308, 'YOUR HOST', 16, '#1d4ed8', 700);
+text(660, 308, 'One operator · one active call', 19, '#1d4ed8');
+box(48, 333, 435, 166, 'Control service', ['Authentication & managed settings', 'Fixed targets · limits · idempotency', 'Admission, pause & recovery']);
+box(545, 333, 455, 166, 'SQLite ledger', ['Calls, transcripts & usage', 'Delegation receipts & results', 'Signed event outbox'], '#7c3aed');
+edge('M 265 231 V 333');
+edge('M 483 411 H 545', '#64748b', true);
+box(48, 571, 952, 153, 'Shared call runtime', ['Lifecycle coordination · bounded PCM queues · audio pacing', 'Context before dialing / greeting · client delegation · result delivery'], '#0d9488');
+edge('M 265 499 V 571');
+edge('M 770 571 V 499', '#64748b', true);
+text(62, 548, 'admitted call', 17);
+text(792, 548, 'durable state', 17);
+box(48, 801, 435, 165, 'Telegram worker', ['teleproto + NTgCalls · isolated process', 'IPC signaling & PCM', 'FFmpeg 48 ↔ 24 kHz'], '#0d9488');
+box(545, 801, 455, 165, 'WhatsApp / WaCalls', ['Private Go sidecar + PCM patch', 'HTTP control · SSE signaling', 'Authenticated media WS · 16 kHz'], '#0d9488');
+edge('M 265 724 V 801', '#0d9488', true);
+edge('M 770 724 V 801', '#0d9488', true);
+box(48, 1070, 435, 110, 'Telegram phone', ['Bound receiving account'], '#0d9488');
+box(545, 1070, 455, 110, 'WhatsApp phone', ['Bound receiving account'], '#0d9488');
+edge('M 265 966 V 1070', '#0d9488', true);
+edge('M 770 966 V 1070', '#0d9488', true);
+text(281, 1040, 'platform call', 17, '#0f766e');
+text(786, 1040, 'platform call', 17, '#0f766e');
+box(1064, 333, 344, 285, 'GPT-Live-1', ['Primary WebSocket · PCM', 'Transcript fragments', 'Choose one delegation mode:', 'Client → your backend', 'Responses → OpenAI model', 'Optional web search', 'in Responses mode'], '#0d9488');
+edge('M 1000 601 H 1035 V 433 H 1064', '#0d9488', true);
+
+box(1064, 724, 344, 279, 'HTTP agent backend', ['Context & signed events', 'Client-mode execution', 'Durable result callbacks', '', 'Example: simulation or', 'OpenAI Responses', 'gpt-5.6-sol text assistance'], '#7c3aed');
+edge('M 1000 665 H 1236 V 724', '#7c3aed');
+text(1068, 635, 'context / events · both modes', 17, '#7c3aed');
+text(1068, 661, 'delegations / results · client', 17, '#7c3aed');
+// Return callbacks enter the authenticated control API; this dashed path denotes HTTP messages.
+edge('M 1064 775 H 1048 V 254 H 440 V 333', '#7c3aed', false, true);
+text(1080, 1050, 'Your business owns', 21, '#0f172a', 650);
+text(1080, 1083, 'Tasks & permissions', 19);
+text(1080, 1113, 'Project routing', 19);
+text(1080, 1143, 'Long-term memory', 19);
+text(48, 1225, 'Raw audio stays in memory. Call records and optional transcripts follow the configured retention policy.', 20, '#334155');
+out.push('</g></svg>');
+writeFileSync(new URL('./architecture.svg', import.meta.url), out.join('\n') + '\n');

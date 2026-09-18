@@ -64,7 +64,7 @@ test('lost dial response retains reservation and does not retry', async () => {
   await expect(f.driver.dial('2', AbortSignal.timeout(1000))).rejects.toThrow('reconcile');
   await expect(f.driver.dial('2', AbortSignal.timeout(1000))).rejects.toThrow('reserved');
   expect(f.invoke.mock.calls.filter(([r]) => r instanceof Api.phone.RequestCall)).toHaveLength(1);
-  expect(f.callbacks.onState).toHaveBeenLastCalledWith(undefined, 'uncertain');
+  expect(f.callbacks.onState).toHaveBeenLastCalledWith(undefined, 'uncertain', undefined);
 });
 
 test('an update for an old call cannot bind an outgoing reservation', async () => {
@@ -88,6 +88,18 @@ test('native connect failure stops media and attempts one platform discard', asy
   await f.driver.dial('2', AbortSignal.timeout(1000));
   await f.update(new Api.PhoneCallAccepted({ ...common, gB: Buffer.alloc(256) }));
   expect(f.invoke.mock.calls.filter(([r]) => r instanceof Api.phone.DiscardCall)).toHaveLength(1);
-  expect(f.callbacks.onState).toHaveBeenCalledWith('10', 'uncertain');
+  expect(f.callbacks.onState).toHaveBeenCalledWith('10', 'uncertain', 'telegram_media_connect_failed');
   expect(f.callbacks.onState).toHaveBeenLastCalledWith('10', 'ended');
+});
+
+test('incoming media initialization failure is classified without exposing native error details', async () => {
+  const f = fixture();
+  media.connect.mockRejectedValueOnce(new Error('native error with private parameters'));
+  await f.update(new Api.PhoneCallRequested({ ...common, adminId: bigInt(2), participantId: bigInt(1), gAHash: Buffer.alloc(32, 7) }));
+  await expect(f.driver.accept('10', AbortSignal.timeout(1000))).rejects.toThrow('Incoming Telegram acceptance is uncertain');
+  expect(f.callbacks.onState).toHaveBeenCalledWith('10', 'connected');
+  expect(f.callbacks.onState).toHaveBeenCalledWith('10', 'uncertain', 'telegram_media_connect_failed');
+  expect(f.callbacks.onAudioReady).not.toHaveBeenCalled();
+  expect(f.invoke.mock.calls.filter(([request]) => request instanceof Api.phone.DiscardCall)).toHaveLength(1);
+  expect(JSON.stringify(f.callbacks.onState.mock.calls)).not.toContain('private parameters');
 });
