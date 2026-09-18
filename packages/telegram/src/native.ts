@@ -45,7 +45,7 @@ export class TelegramMedia {
     } });
   }
   async connect(call: Api.PhoneCall): Promise<void> {
-    await this.native.connectP2p(this.userId, rtcServers(call.connections), call.protocol.libraryVersions, Boolean(call.p2pAllowed), call.customParameters?.data ?? '');
+    await this.native.connectP2p(this.userId, rtcServers(call.connections), call.protocol.libraryVersions, Boolean(call.p2pAllowed), call.customParameters?.data ?? null);
     await this.native.setStreamSources(this.userId, StreamMode.PLAYBACK, { microphone: {
       mediaSource: MediaSource.EXTERNAL, sampleRate: 48000, channelCount: 1, input: '', keepOpen: true,
     } });

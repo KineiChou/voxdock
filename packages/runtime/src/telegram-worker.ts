@@ -31,7 +31,7 @@ process.on('message', (raw: unknown) => {
       disconnect = () => client.disconnect();
       const profile = await telegramAccountProfile(client);
       driver = new TelegramDriver(client, profile.userId, options.peerId, {
-        onState: (ref, state) => emit({ type: 'state', ref, state }),
+        onState: (ref, state, reason) => emit({ type: 'state', ref, state, ...(reason ? { reason } : {}) }),
         onAudio: (ref, pcm) => emit({ type: 'audio', ref, pcm }),
         onAudioReady: ref => emit({ type: 'audioReady', ref }),
         onIncoming: (ref, allowed) => emit({ type: 'incoming', ref, allowed }),

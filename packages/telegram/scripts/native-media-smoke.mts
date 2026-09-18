@@ -14,4 +14,15 @@ try {
     absoluteCaptureTimestampMs: 0n, rotation: VideoRotation.VIDEO_ROTATION_0, width: 0, height: 0,
   });
 } finally { await native.stop(1n); }
-console.log('Native create, byte ABI, external PCM and cleanup smoke passed; no account or call used.');
+// Empty protocol versions fail after JSON parsing but before NativeConnection
+// construction in pinned rc03. This exercises the real binding boundary
+// without opening any network connection, even when parsing succeeds.
+await native.createP2pCall(2n);
+try {
+  // skipExchange is only used in this synthetic check; rc03 byte inputs are arrays.
+  await native.skipExchange(2n, Array(256).fill(1) as unknown as Buffer, false);
+  for (const parameters of [null, '{"network_use_default_route":true}', 'null', '']) {
+    await assert.rejects(native.connectP2p(2n, [], [], false, parameters), parameters === '' ? /incomplete JSON/ : /No versions provided/);
+  }
+} finally { await native.stop(2n); }
+console.log('Native create, byte ABI, external PCM, optional JSON and cleanup smoke passed; no account, network connection or call used.');

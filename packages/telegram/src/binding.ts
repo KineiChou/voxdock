@@ -17,7 +17,8 @@ export class TelegramNativeBinding extends NTgCalls {
   override sendExternalFrame(id: bigint, device: StreamDevice, value: Buffer, metadata: FrameData): Promise<void> {
     return super.sendExternalFrame(id, device, bytes(value), metadata);
   }
-  override connectP2p(id: bigint, servers: RTCServer[], versions: string[], p2p: boolean, parameters: string): Promise<void> {
-    return super.connectP2p(id, servers.map(server => ({ ...server, ...(server.peerTag ? { peerTag: bytes(server.peerTag) } : {}) })), versions, p2p, parameters);
+  // rc03 accepts optional custom JSON as native null, despite declaring string.
+  override connectP2p(id: bigint, servers: RTCServer[], versions: string[], p2p: boolean, parameters: string | null): Promise<void> {
+    return super.connectP2p(id, servers.map(server => ({ ...server, ...(server.peerTag ? { peerTag: bytes(server.peerTag) } : {}) })), versions, p2p, parameters as string);
   }
 }
