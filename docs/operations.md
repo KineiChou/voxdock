@@ -27,7 +27,7 @@ An outbound request requires every identifier and a fixed expiry:
 pnpm voxdock call --config ./instance/voxdock.config.json \
   --target owner-telegram --context-ref example-42 \
   --correlation-ref delivery:example-42 --key delivery-example-42 \
-  --expires-at 2026-09-17T09:05:00Z
+  --expires-at YOUR_UTC_ISO_EXPIRY
 ```
 
 Use an actual future UTC expiry within your configured request TTL. If the outcome is unknown, retry the exact original key and body. Do not generate a fresh key or expiry to retry the same notification. The service checks calling permission, target binding and adapter readiness before any fresh request proceeds.

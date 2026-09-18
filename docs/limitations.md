@@ -8,15 +8,18 @@ VoxDock is experimental software for a single self-hosted operator, one configur
 | --- | --- |
 | Telegram | Real account binding and incoming call handshakes have been exercised. Handset audio has not succeeded; complete incoming/outgoing conversations remain unvalidated. |
 | WhatsApp | A real outgoing conversation sustained two minutes, including a GPT-5.6 Sol answer. At the configured duration limit, the receiving iPhone displayed “Call failed”; normal handset termination remains unresolved. |
-| Incoming WhatsApp calls | Device-qualified LID-to-phone admission has a regression-tested parser correction. Successful handset acceptance after that correction remains unverified. Unknown or mismatched identities remain rejected. |
+| Incoming WhatsApp calls | Device-qualified LID-to-phone admission is supported in code; successful handset acceptance remains unverified. Unknown or mismatched identities remain rejected. |
+| WhatsApp connection setup | Full receiving-account message/call verification and unlink/relink recovery remain unvalidated on real devices. |
 | GPT-Live-1 | Real session setup, audio, delegation and final usage have been exercised. Interruption, longer conversations and end-to-end audio quality require further validation. |
-| Operations | Real-account backup/restore, version upgrades and 24-hour endurance have not been accepted. Automated checks and a successful build do not establish those properties. |
+| Operations | Real-account backup/restore, version upgrades and 24-hour endurance have not been validated. Automated checks and a successful build do not establish those properties. |
 
 A platform termination acknowledgment is signaling evidence, not proof of the receiving phone's display state. A Live commentary acknowledgment does not prove that speech was heard. Backend acceptance and model output do not prove that an external business action succeeded.
 
 ## Recovery and availability
 
 No automatic redial occurs. An uncertain call retains capacity and blocks new calls until its external state is reconciled. Stop the service before offline reconciliation, independently verify termination, then follow [state and recovery](state-and-recovery.md).
+
+WaCalls termination query deadlines do not bound every native cleanup operation. Upstream Pion close/configuration calls are synchronous; behavior during a native cleanup stall remains unvalidated. A process exit, timeout or cancelled HTTP request is not evidence that the handset call ended.
 
 Run one bridge process per local SQLite data directory. A recovered interrupted call persists a pause. Configuration changes and pairing temporarily block admission; uncertain cleanup keeps a recovery pause. Keep platform account sessions, credentials and consistent database backups private.
 

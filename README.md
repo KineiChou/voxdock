@@ -16,7 +16,7 @@ A self-hosted bridge between your agent backend and voice calls on Telegram and 
 
 VoxDock gives your backend a voice: call a configured recipient, deliver an opening message, accept requests during the conversation, and return results to the same call. A web console brings account setup, conversation records, usage and settings together. The CLI and HTTP API expose the same backend controls.
 
-> **Experimental software.** WhatsApp has supported a real two-minute Live conversation with a backend answer. Clean handset termination and incoming-call retesting remain open; Telegram account binding and incoming handshakes have been exercised, but handset audio is not yet validated. See [known limitations](docs/limitations.md) before enabling calls.
+> **Experimental v0.1.0 source release.** Review the [platform and operational boundaries](docs/limitations.md) before enabling calls.
 
 ## What you can do
 
