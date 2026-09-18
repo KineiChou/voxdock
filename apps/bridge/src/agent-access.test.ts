@@ -9,6 +9,7 @@ import { createBridgeServer, type BridgeServerOptions } from './server.js';
 import { AgentCredentials } from './agent-credentials.js';
 import { isConsoleManagementPath } from './console-network.js';
 import { runAgentCommand } from './cli-agents.js';
+import { controlRequest } from './cli-api.js';
 vi.mock('node:fs', async original => { const fs = await original<typeof import('node:fs')>(); return { ...fs, fsyncSync: vi.fn(fs.fsyncSync) }; });
 const cleanup: Array<() => unknown> = [];
 afterEach(async () => { for (const stop of cleanup.splice(0).reverse()) await stop(); });
@@ -88,6 +89,19 @@ it('revokes an issued CLI credential if durable token output fails', async () =>
   const request = async (path: string) => { calls.push(path); return { agent: { id: 'issued-id' }, token: 'never-print' }; };
   await expect(runAgentCommand('create', undefined, { out, name: 'A', target: 'owner' }, false, request, () => {})).rejects.toThrow('credential_write_failed_revoked');
   expect(calls).toEqual(['/v1/console/agents', '/v1/console/agents/issued-id/revoke']);
+  expect(existsSync(out)).toBe(false);
+});
+
+it.each(['connection_lost', 'invalid_response'])('reports %s after issuance as uncertain without retrying', async failure => {
+  const out = join(directory(), 'uncertain-token');
+  const fetch = vi.fn(async () => {
+    if (failure === 'connection_lost') throw new Error('connection_reset');
+    return new Response('truncated');
+  });
+  const request = (path: string, options = {}) => controlRequest(config(), token, path, { ...options, fetch });
+  await expect(runAgentCommand('create', undefined, { out, name: 'A', target: 'owner' }, false, request, () => {}))
+    .rejects.toThrow('credential_issuance_uncertain_check_agents');
+  expect(fetch).toHaveBeenCalledTimes(1);
   expect(existsSync(out)).toBe(false);
 });
 

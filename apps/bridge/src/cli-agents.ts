@@ -28,7 +28,10 @@ export async function runAgentCommand(action: string | undefined, id: string | u
       catch { throw new CliError('credential_write_failed_revoke_required'); }
       throw new CliError('credential_write_failed_revoked');
     }
-    if (!(error instanceof CliError)) throw new CliError('credential_issuance_uncertain_check_agents');
+    if (!(error instanceof CliError) || [
+      'control_unavailable', 'control_timeout_outcome_unknown', 'empty_control_response',
+      'invalid_control_response', 'control_response_too_large', 'control_request_failed', 'internal_error',
+    ].includes(error.code)) throw new CliError('credential_issuance_uncertain_check_agents');
     throw error;
   } finally {
     closeSync(fd);
