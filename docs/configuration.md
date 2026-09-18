@@ -116,6 +116,10 @@ These belong in the deployment JSON and require restarting the service:
 
 Console credentials and **remote management access** are managed separately under Settings → Console account. Disabling remote management gates configuration, account and connection routes for both browser and bearer clients; it does not remove call/audit access. The setting relies on correctly configured trusted proxies. Local recovery requires stopping the writer; see [console account](console-account.md).
 
+## Agent client configuration
+
+The optional stdio MCP process has its own fixed `VOXDOCK_BASE_URL` and private `VOXDOCK_AGENT_TOKEN_FILE`; it does not load the bridge deployment file or need platform/Live secrets. Issue a scoped credential through the administrator CLI/API and keep the administrator control token out of the MCP host. See [agent integration](agent-integration.md) for source installation, optional request timeout and host registration.
+
 ## Deliberate capability boundaries
 
 VoxDock uses the **Live** primary WebSocket protocol, not the Realtime voice-turn API. It does not expose undocumented temperature, VAD or interrupt-threshold knobs. Conversational behavior is configured through instructions.

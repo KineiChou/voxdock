@@ -13,7 +13,9 @@
     "voxdock": "node --import tsx apps/bridge/src/cli.ts",
     "typecheck": "tsc --noEmit && pnpm --filter @voxdock/console typecheck",
     "build": "pnpm --filter @voxdock/console build",
-    "test": "vitest run"
+    "test": "vitest run",
+    "mcp": "node apps/mcp/bin/voxdock-mcp.mjs",
+    "smoke:mcp": "node --import tsx scripts/smoke-mcp.mts"
   },
   "devDependencies": {
     "@types/node": "24.5.2",

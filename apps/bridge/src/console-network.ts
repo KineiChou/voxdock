@@ -20,7 +20,7 @@ export function isLocalConsoleClient(peer: string | undefined, forwarded: string
 export function isConsoleManagementPath(url: string): boolean {
   let path: string;
   try { path = decodeURIComponent(url.split('?')[0]!); } catch { return true; }
-  return /^\/(?:admin\/v1|v1\/console)\/(?:account|settings|connections)(?:\/|$)/.test(path) || /^\/console\/(?:settings|connections)(?:\/|$)/.test(path);
+  return /^\/(?:admin\/v1|v1\/console)\/(?:account|settings|connections|agents)(?:\/|$)/.test(path) || /^\/console\/(?:settings|connections)(?:\/|$)/.test(path);
 }
 export function requestAllowsManagement(request: FastifyRequest, trustedProxyAddresses: readonly string[] = []): boolean {
   return isLocalConsoleClient(request.raw.socket.remoteAddress, request.headers['x-forwarded-for'], trustedProxyAddresses);

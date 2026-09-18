@@ -1,0 +1,124 @@
+import { hashConsolePassword } from './console-password.js';
+import { existsSync, fsyncSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, expect, it, vi } from 'vitest';
+import { parseConfig } from '@voxdock/config';
+import { CallStore } from '@voxdock/core';
+import { createBridgeServer, type BridgeServerOptions } from './server.js';
+import { AgentCredentials } from './agent-credentials.js';
+import { isConsoleManagementPath } from './console-network.js';
+import { runAgentCommand } from './cli-agents.js';
+import { controlRequest } from './cli-api.js';
+vi.mock('node:fs', async original => { const fs = await original<typeof import('node:fs')>(); return { ...fs, fsyncSync: vi.fn(fs.fsyncSync) }; });
+const cleanup: Array<() => unknown> = [];
+afterEach(async () => { for (const stop of cleanup.splice(0).reverse()) await stop(); });
+function directory() { const dir = mkdtempSync(join(tmpdir(), 'agent-test-')); cleanup.push(() => rmSync(dir, { recursive: true, force: true })); return dir; }
+const token = 'operator-test-with-at-least-32-characters';
+const config = () => parseConfig({ security: { control_token_file: 'unused' }, calling: { enabled: true }, channels: { telegram: { enabled: true, account_ref: 'tg', api_id_env: 'TEST_ID', api_hash_file: 'unused', session_file: 'unused' } }, targets: ['owner'].map(id => ({ id, channel: 'telegram', account_ref: 'tg', principal_ref: id, peer_id_env: 'TEST_OWNER' })), live: { api_key_file: 'unused' }, backend: { id: 'test', base_url: 'http://127.0.0.1:8090', request_token_file: 'unused', event_signing_key_file: 'unused' } });
+const body = { target_id: 'owner', correlation_ref: 'task:1', context_ref: 'context:1', expires_at: '2026-09-16T12:01:00Z' };
+const auth = (key: string) => ({ authorization: `Bearer ${key}`, 'idempotency-key': 'shared-key' });
+async function setup(extra: Partial<BridgeServerOptions> = {}) {
+  const dir = directory();
+  const agents = new AgentCredentials(dir);
+  const store = new CallStore(':memory:', { now: () => new Date('2026-09-16T12:00:00Z') });
+  const app = await createBridgeServer({ config: config(), store, agents, controlToken: token, readyChannels: new Set(['telegram']), onCallCreated: async () => {}, ...extra });
+  cleanup.push(async () => { await app.close(); store.close(); });
+  return { app, agents, store, dir };
+}
+it('isolates targets, commands, own calls, operator calls and forbidden routes', async () => {
+  const { app, agents, store } = await setup();
+  const a = agents.create({ name: 'A', allowed_targets: ['owner'], can_end_calls: true });
+  const b = agents.create({ name: 'B', allowed_targets: ['owner'] });
+  expect((await app.inject({ url: '/v1/targets', headers: auth(a.token) })).json()).toEqual([{ id: 'owner', channel: 'telegram', enabled: true }]);
+  for (const [method,url] of [['GET','/v1/calls'], ['GET','/v1/events'], ['GET','/v1/openapi.json'], ['GET','/v1/console/agents'], ['POST','/v1/control/pause']] as const) expect((await app.inject({ method, url, headers: auth(a.token) })).statusCode).toBe(403);
+  expect((await app.inject({ method: 'POST', url: '/v1/calls', headers: auth(a.token), payload: { ...body, target_id: 'other' } })).statusCode).toBe(403);
+  const first = await app.inject({ method: 'POST', url: '/v1/calls', headers: auth(a.token), payload: body });
+  expect(first.statusCode).toBe(202);
+  const id = first.json().call_id;
+  expect((await app.inject({ url: `/v1/calls/${id}`, headers: auth(b.token) })).statusCode).toBe(404);
+  expect((await app.inject({ url: `/v1/calls/${id}/record`, headers: auth(a.token) })).statusCode).toBe(403);
+  expect((await app.inject({ method: 'POST', url: '/v1/calls', headers: auth(b.token), payload: body })).statusCode).toBe(409);
+  const rotated = agents.rotate(a.agent.id);
+  expect((await app.inject({ url: `/v1/calls/${id}`, headers: auth(a.token) })).statusCode).toBe(401);
+  expect((await app.inject({ method: 'POST', url: '/v1/calls', headers: auth(rotated.token), payload: body })).json().call_id).toBe(id);
+  expect((await app.inject({ method: 'POST', url: `/v1/calls/${id}/end`, headers: auth(rotated.token) })).statusCode).toBe(200);
+  const second = await app.inject({ method: 'POST', url: '/v1/calls', headers: auth(b.token), payload: body });
+  expect(second.statusCode).toBe(202);
+  expect(second.json().call_id).not.toBe(id);
+  expect((await app.inject({ method: 'POST', url: `/v1/calls/${second.json().call_id}/end`, headers: auth(b.token) })).statusCode).toBe(403);
+  expect((await app.inject({ method: 'POST', url: `/v1/calls/${second.json().call_id}/end`, headers: auth(rotated.token) })).statusCode).toBe(404);
+  store.transition(second.json().call_id, 'ended');
+  const operator = await app.inject({ method: 'POST', url: '/v1/calls', headers: auth(token), payload: body });
+  expect(operator.statusCode).toBe(202);
+  expect((await app.inject({ url: `/v1/calls/${operator.json().call_id}`, headers: auth(rotated.token) })).statusCode).toBe(404);
+  expect((await app.inject({ url: '/v1/calls', headers: auth(token) })).json().calls).toHaveLength(3);
+  agents.revoke(a.agent.id);
+  expect((await app.inject({ url: '/v1/capabilities', headers: auth(rotated.token) })).statusCode).toBe(401);
+});
+it('persists only token digests, survives restart and gates management paths', async () => {
+  const { app, dir } = await setup();
+  const response = await app.inject({ method: 'POST', url: '/v1/console/agents', headers: auth(token), payload: { name: 'Automation', allowed_targets: ['owner'] } });
+  expect(response.statusCode).toBe(201);
+  const issued = response.json();
+  const persisted = readFileSync(join(dir, 'agent-credentials.json'), 'utf8');
+  expect(persisted).not.toContain(issued.token);
+  expect(statSync(join(dir,'agent-credentials.json')).mode & 0o777).toBe(0o600);
+  expect(new AgentCredentials(dir).authenticate(issued.token)?.id).toBe(issued.agent.id);
+  const listing = await app.inject({ url: '/v1/console/agents', headers: auth(token) });
+  expect(listing.body).not.toContain('token');
+  for (const prefix of ['/admin/v1','/v1/console']) expect(isConsoleManagementPath(`${prefix}/agents/${issued.agent.id}/rotate`)).toBe(true);
+});
+it('writes CLI token privately, keeps stdout clean and refuses existing paths before issuance', async () => {
+  const out = join(directory(),'token');
+  const agent = { id: 'agent-id', name: 'A' };
+  const calls: string[] = []; const output: unknown[] = [];
+  const request = async (path: string) => { calls.push(path); return { agent, token: 'private-token' }; };
+  await runAgentCommand('create', undefined, { out, name: 'A', target: 'owner' }, true, request, value => output.push(value));
+  expect(readFileSync(out,'utf8')).toBe('private-token\n');
+  expect(statSync(out).mode & 0o777).toBe(0o600);
+  expect(JSON.stringify(output)).not.toContain('private-token');
+  await expect(runAgentCommand('rotate', 'agent-id', { out }, false, request, () => {})).rejects.toThrow('credential_output_unavailable');
+  expect(calls).toHaveLength(1);
+});
+
+it('revokes an issued CLI credential if durable token output fails', async () => {
+  const out = join(directory(), 'failed-token');
+  const calls: string[] = [];
+  vi.mocked(fsyncSync).mockImplementationOnce(() => { throw new Error('disk_full'); });
+  const request = async (path: string) => { calls.push(path); return { agent: { id: 'issued-id' }, token: 'never-print' }; };
+  await expect(runAgentCommand('create', undefined, { out, name: 'A', target: 'owner' }, false, request, () => {})).rejects.toThrow('credential_write_failed_revoked');
+  expect(calls).toEqual(['/v1/console/agents', '/v1/console/agents/issued-id/revoke']);
+  expect(existsSync(out)).toBe(false);
+});
+
+it.each(['connection_lost', 'invalid_response'])('reports %s after issuance as uncertain without retrying', async failure => {
+  const out = join(directory(), 'uncertain-token');
+  const fetch = vi.fn(async () => {
+    if (failure === 'connection_lost') throw new Error('connection_reset');
+    return new Response('truncated');
+  });
+  const request = (path: string, options = {}) => controlRequest(config(), token, path, { ...options, fetch });
+  await expect(runAgentCommand('create', undefined, { out, name: 'A', target: 'owner' }, false, request, () => {}))
+    .rejects.toThrow('credential_issuance_uncertain_check_agents');
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(existsSync(out)).toBe(false);
+});
+
+it('requires console login and CSRF for credential management through the browser API', async () => {
+  const origin = 'https://console.example.test';
+  const password = 'a-private-console-password';
+  const { app, agents } = await setup({ console: { publicOrigin: origin, passwordHash: await hashConsolePassword(password), assetsDirectory: directory() } });
+  const a = agents.create({ name: 'A', allowed_targets: ['owner'] });
+  expect((await app.inject({ url: '/admin/v1/agents', headers: auth(a.token) })).statusCode).toBe(401);
+  const login = await app.inject({ method: 'POST', url: '/admin/v1/session', headers: { origin }, payload: { password } });
+  const cookie = login.cookies.map(cookie => `${cookie.name}=${encodeURIComponent(cookie.value)}`).join('; ');
+  expect((await app.inject({ url: '/admin/v1/agents', headers: { cookie } })).statusCode).toBe(200);
+  const url = `/admin/v1/agents/${a.agent.id}/rotate`;
+  expect((await app.inject({ method: 'POST', url, headers: { cookie, origin } })).statusCode).toBe(403);
+  const rotated = await app.inject({ method: 'POST', url, headers: { cookie, origin, 'x-csrf-token': login.json().csrf_token } });
+  expect(rotated.statusCode).toBe(200);
+  expect(rotated.json().agent.id).toBe(a.agent.id);
+  expect(agents.authenticate(a.token)).toBeUndefined();
+  expect(agents.authenticate(rotated.json().token)?.id).toBe(a.agent.id);
+});

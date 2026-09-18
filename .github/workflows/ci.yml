@@ -19,6 +19,8 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm build
       - run: pnpm test
+      - name: Verify MCP stdio tools against a synthetic control server
+        run: pnpm smoke:mcp
       - name: Run the real CLI with calling disabled
         run: node --import tsx scripts/smoke-control.mts
       - name: Check native Telegram binding without an account

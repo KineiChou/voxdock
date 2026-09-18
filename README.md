@@ -20,6 +20,7 @@ VoxDock gives your backend a voice: call a configured recipient, deliver an open
 
 ## What you can do
 
+- **Let your coding agent request a call.** Source-installed stdio MCP tools for Codex, Claude Code and other hosts use scoped credentials and fixed targets; [setup guide](docs/agent-integration.md).
 - **Connect your backend.** Supply fresh call context, receive client-managed delegations and send durable result callbacks, or select OpenAI-managed Responses delegation with optional web search.
 - **Talk through either platform.** Telegram uses teleproto and an isolated NTgCalls worker; WhatsApp uses a private WaCalls sidecar. Both share continuous audio and GPT-Live-1.
 - **Manage calls from one console.** Link accounts, verify receiving accounts, configure voice and calling limits, and inspect service readiness.
@@ -72,7 +73,7 @@ The [example backend](docs/backend.md#independent-example) starts in simulation 
 | Configure Live and delegation | [Configuration guide](docs/configuration.md) |
 | Set up accounts and manage conversations | [Operator console](docs/console.md) |
 | Use commands and recover a paused service | [Operations](docs/operations.md) · [State and recovery](docs/state-and-recovery.md) |
-| Call VoxDock from an agent | [Control API](docs/api.md) · [Backend contract](docs/backend.md) |
+| Call VoxDock from an agent | [MCP and scoped credentials](docs/agent-integration.md) · [Control API](docs/api.md) · [Backend contract](docs/backend.md) |
 | Understand audio and platform boundaries | [Runtime](docs/runtime.md) · [Live/audio](docs/live.md) · [Platforms](docs/platforms.md) |
 | Check supported scope and known issues | [Known limitations](docs/limitations.md) |
 

@@ -1,6 +1,6 @@
 # Control and integration API
 
-The `/v1/*` service requires `Authorization: Bearer <control-token>`; `/healthz` is public. Keep the control API on a trusted private network or behind your authenticated HTTPS deployment. The optional [operator console](console.md) serves public login assets at `/console/` and uses separate authenticated cookie sessions at `/admin/v1/*`. Initial console credentials are generated into a private bootstrap file; managed credentials remain private. Call requests select configured target references and cannot supply recipients or backend URLs.
+The `/v1/*` service requires bearer authentication. The administrator control token provides operator access; scoped agent tokens permit only the limited call operations below; `/healthz` is public. Keep the control API on a trusted private network or behind your authenticated HTTPS deployment. The optional [operator console](console.md) serves public login assets at `/console/` and uses separate authenticated cookie sessions at `/admin/v1/*`. Initial console credentials are generated into a private bootstrap file; managed credentials remain private. Call requests select configured target references and cannot supply recipients or backend URLs.
 
 | Endpoint | Purpose |
 | --- | --- |
@@ -25,6 +25,12 @@ An uncertain call requires reconciliation. An end request cannot erase that stat
 Backend results include both `context_revision` (the source conversation snapshot) and `revision` (the business result sequence). An old-context result may be recorded without being spoken. `playback_status:eligible` is a routing decision, not evidence of playback or an external action. Result retries reuse the original `result_id`; the bridge does not repeat speech on a duplicate result.
 
 See [backend integration](backend.md), [runtime](runtime.md) and [recovery](state-and-recovery.md) for the corresponding behavior. API tokens, audit exports and transcripts are private operator data.
+
+## Scoped agent access
+
+[Agent credentials](agent-integration.md) allow `GET /v1/capabilities`, scoped `GET /v1/targets`, `POST /v1/calls`, and reads of calls created by the same agent identity. `POST /v1/calls/:call_id/end` additionally requires `can_end_calls`. Target permissions apply to creation and later call reads/termination. Other agents’ calls, operator calls and inbound calls are unavailable to scoped agents. They cannot access call listings, records, transcripts, events, result callbacks or administrator routes. Capabilities include `server_time` and `max_request_ttl_seconds`.
+
+Credential management uses `GET/POST /v1/console/agents` and `POST /v1/console/agents/:id/rotate` or `/revoke`, with equivalent `/admin/v1` browser routes. Only administrators may use them, under the existing remote-management gate. Creation/rotation return a one-time token; lists contain metadata only. See the [exact request shapes and CLI lifecycle](agent-integration.md#credential-management-api).
 
 ## Managed settings and connections
 

@@ -1,3 +1,4 @@
+import { AgentCredentials } from './agent-credentials.js';
 import { existsSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -135,6 +136,7 @@ export async function startService(
     telegramPairing = new TelegramPairingService({ acquire: () => runtime!.acquire(), configuration: () => configuration.view(), getTelegramConfig });
     targetPairing = new TargetPairingService({ acquire: () => runtime!.acquire(), configuration: () => configuration.view(), getWhatsAppConfig });
     app = await createBridgeServer({
+      agents: new AgentCredentials(data),
       config,
       store,
       controlToken: token,

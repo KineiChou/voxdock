@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Scoped agent credentials with fixed target permissions, own-call status access, optional termination permission, and administrator CLI/API create/list/rotate/revoke operations.
+- Source-installed stdio MCP tools for listing targets, requesting calls, reading status and ending owned calls, backed by a typed HTTP client and the official TypeScript MCP SDK. No transcript access, inline briefing upload or automatic notification worker is included.
+- Codex and Claude Code setup documentation and synthetic stdio/HTTP verification. The release remains experimental, with Telegram handset and independent recovery/endurance checks outstanding.
+- WhatsApp handset workflow testing confirmed complete by the maintainer on 2026-09-18; this does not claim paid Responses/web-search, backup restore, endurance or broad device-compatibility validation.
+
 ## 0.1.0
 
 Initial experimental source release for one self-hosted operator and one active call.
