@@ -83,3 +83,46 @@ it('keeps command rejection separate from finalization and bounds multilingual a
   s.receive({ type: 'session.closed', reason: 'close_requested', usage: { seconds: 2 } });
   expect(s.events.at(-1)).toMatchObject({ finalization: 'complete', seconds: 2 });
 });
+
+it('serializes Responses configuration and custom voice using the Live session shape', () => {
+  const delegation = { type: 'responses' as const, responses: { model: 'gpt-5.6-luna', instructions: 'Research with sources.', max_output_tokens: 512,
+    parallel_tool_calls: false, reasoning: { effort: 'low' as const }, service_tier: 'priority' as const, text: { verbosity: 'low' as const }, tool_choice: 'auto' as const, tools: [{ type: 'web_search' as const }] } };
+  const s = setup({ delegation, voice: { id: 'voice_test' } }); s.ready();
+  expect(s.sent[0]).toMatchObject({ type: 'session.start', session: { delegation, audio: { output: { voice: { id: 'voice_test' } } } } });
+  s.client.close(); s.handlers().close();
+  const clientMode = setup({ delegation: { type: 'client', responses: delegation.responses } }); clientMode.ready();
+  expect((clientMode.sent[0]?.session as Record<string, unknown>).delegation).toEqual({ type: 'client' });
+  clientMode.client.close(); clientMode.handlers().close();
+});
+
+it('routes managed envelopes, refuses client appends to managed IDs, and audits existing work while closing', () => {
+  const s = setup({ delegation: { type: 'responses', responses: { model: 'gpt-5.6-luna' } } }); s.ready();
+  const envelope = (delegation_id: string, event: object) => s.receive({ type: 'response.event', delegation_id, event });
+  s.receive({ type: 'session.delegation.created', delegation: { id: 'managed', target: 'responses' }, offset_ms: 3 });
+  expect(s.events.at(-1)).toEqual({ type: 'delegation', id: 'managed', target: 'responses', offsetMs: 3 });
+  expect(() => s.client.commentary('Do not repeat.', 'managed')).toThrow('Unknown delegation');
+  expect(() => s.client.thinking('Do not repeat.', 'managed')).toThrow('Unknown delegation');
+  s.client.instructions('Use concise answers.');
+  s.client.close();
+  s.receive({ type: 'session.delegation.created', delegation: { id: 'late', target: 'responses' }, offset_ms: 4 });
+  envelope('late', { type: 'response.created', response: { id: 'late-response' } });
+  envelope('late', { type: 'response.completed', response: { id: 'late-response', output: [] } });
+  envelope('managed', { type: 'response.created', response: { id: 'r1' } });
+  envelope('managed', { type: 'response.output_text.delta', item_id: 'msg1', output_index: 0, content_index: 0, delta: 'Verified answer.' });
+  s.receive({ type: 'response.output_text.delta', item_id: 'msg1', output_index: 0, content_index: 0, delta: 'Unwrapped ignored.' });
+  envelope('managed', { type: 'response.completed', response: { id: 'r1', output: [] } });
+  envelope('managed', { type: 'response.completed', response: { id: 'r1', output: [] } });
+  expect(s.events.filter(e => e.type === 'managedResponse')).toEqual([{ type: 'managedResponse', delegationId: 'managed', responseId: 'r1', status: 'completed', summary: 'Verified answer.' }]);
+  expect(s.sent.some(event => event.type === 'session.commentary.append')).toBe(false);
+  s.receive({ type: 'session.closed', reason: 'close_requested', usage: { seconds: 2 } });
+});
+
+it('ignores managed envelopes attached to client delegations and rejects unsupported configured functions', () => {
+  const s = setup(); s.ready();
+  s.receive({ type: 'session.delegation.created', delegation: { id: 'client', target: 'client' }, offset_ms: 0 });
+  s.receive({ type: 'response.event', delegation_id: 'client', event: { type: 'response.created', response: { id: 'r1' } } });
+  s.receive({ type: 'response.event', delegation_id: 'client', event: { type: 'response.completed', response: { id: 'r1' } } });
+  expect(s.events.some(e => e.type === 'managedResponse')).toBe(false);
+  s.client.close(); s.handlers().close();
+  expect(() => setup({ delegation: { type: 'responses', responses: { model: 'test', tools: [{ type: 'function', name: 'write' }] } } })).toThrow('Unsupported');
+});
