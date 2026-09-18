@@ -8,10 +8,10 @@ VoxDock is experimental software for a single self-hosted operator, one configur
 | --- | --- |
 | Telegram | Real account binding and incoming call handshakes have been exercised. Handset audio has not succeeded; complete incoming/outgoing conversations remain unvalidated. |
 | WhatsApp | A real outgoing conversation sustained two minutes, including a GPT-5.6 Sol answer. At the configured duration limit, the receiving iPhone displayed “Call failed”; normal handset termination remains unresolved. |
-| Incoming WhatsApp calls | Device-qualified LID-to-phone admission is supported in code; successful handset acceptance remains unverified. Unknown or mismatched identities remain rejected. |
+| Incoming WhatsApp calls | One incoming conversation was heard on the handset. Later attempts were reported unsuccessful; repeated incoming-call reliability remains unvalidated. Unknown or mismatched identities remain rejected. |
 | WhatsApp connection setup | Full receiving-account message/call verification and unlink/relink recovery remain unvalidated on real devices. |
-| GPT-Live-1 | Real session setup, audio, delegation and final usage have been exercised. Interruption, longer conversations and end-to-end audio quality require further validation. |
-| Operations | Real-account backup/restore, version upgrades and 24-hour endurance have not been validated. Automated checks and a successful build do not establish those properties. |
+| GPT-Live-1 | Real session setup, audio, client delegation and final usage have been exercised. Managed Responses/web search has protocol tests but no paid-service call validation. Interruption, longer conversations and end-to-end audio quality require further validation. |
+| Operations | In-place upgrades have checked saved configuration and records. Real-account backup restoration, broader version compatibility and 24-hour endurance have not been validated. |
 
 A platform termination acknowledgment is signaling evidence, not proof of the receiving phone's display state. A Live commentary acknowledgment does not prove that speech was heard. Backend acceptance and model output do not prove that an external business action succeeded.
 
