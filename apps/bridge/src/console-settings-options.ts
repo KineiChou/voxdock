@@ -1,4 +1,4 @@
-import type { ConsoleSettingsOptions } from '@voxdock/contracts';
+import { LiveReasoningEffortSchema, LiveServiceTierSchema, LiveVerbositySchema, LiveToolChoiceSchema, type ConsoleSettingsOptions } from '@voxdock/contracts';
 
 // Live's documented default and additional voices, checked 2026-09-17:
 // https://developers.openai.com/api/docs/guides/live-conversations#voice-options
@@ -38,6 +38,21 @@ export const consoleSettingsOptions: ConsoleSettingsOptions = {
     { value: 'tr', label: 'Turkish · Türkçe' },
     { value: 'vi', label: 'Vietnamese · Tiếng Việt' },
   ],
+  delegation_modes: [
+    { value: 'client', label: 'External agent' },
+    { value: 'responses', label: 'OpenAI Responses' },
+  ],
+  responses_models: [
+    { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+    { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
+    { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
+    { value: 'gpt-6-astra', label: 'GPT-6 Astra' },
+  ],
+  allow_custom_responses_model: true,
+  reasoning_efforts: LiveReasoningEffortSchema.anyOf.map(option => ({ value: option.const, label: option.const })),
+  service_tiers: LiveServiceTierSchema.anyOf.map(option => ({ value: option.const, label: option.const })),
+  verbosities: LiveVerbositySchema.anyOf.map(option => ({ value: option.const, label: option.const })),
+  tool_choices: LiveToolChoiceSchema.anyOf.map(option => ({ value: option.const, label: option.const })),
   allow_custom_voice: true,
   allow_custom_language: true,
 };
