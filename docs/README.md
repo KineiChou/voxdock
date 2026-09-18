@@ -11,6 +11,7 @@
 
 ## Integrate your backend
 
+- [Agent integration](agent-integration.md): scoped credentials, source-installed MCP, Codex/Claude setup and call semantics.
 - [Control API](api.md): authentication, call requests and result callbacks.
 - [Backend integration](backend.md): context, delegation receipts, signed events and the independent simulation/OpenAI example.
 - [Contract schemas](../packages/contracts/src/index.ts): request, response and event contracts. Export JSON with `pnpm schemas` to `dist/schemas/`.

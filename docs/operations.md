@@ -32,6 +32,10 @@ pnpm voxdock call --config ./instance/voxdock.config.json \
 
 Use an actual future UTC expiry within your configured request TTL. If the outcome is unknown, retry the exact original key and body. Do not generate a fresh key or expiry to retry the same notification. The service checks calling permission, target binding and adapter readiness before any fresh request proceeds.
 
+## Manage agent credentials
+
+`pnpm voxdock agent list --config FILE` lists credential metadata. Create with `agent create --name NAME --target ID[,ID] [--allow-end] --out NEW_FILE`; rotate with `agent rotate ID --out NEW_FILE`; revoke with `agent revoke ID`. Include `--config FILE` in each command. Creation and rotation write the token to a new private file and never print it. They are online administrator operations, subject to remote-management restrictions. Revocation/rotation affect subsequent requests, not the lifetime of an active call. [Agent integration](agent-integration.md) covers permissions, lost issuance responses, MCP registration and restarting clients after rotation.
+
 ## Reconcile and resume
 
 Stop the service before local mutation commands. Verify the external platform has actually ended an uncertain call, then run `pnpm voxdock reconcile CALL_ID --confirm-ended --config FILE`. This records `operator_confirmed_ended` and keeps calling paused. It does not contact the platform or settle unknown usage to zero.

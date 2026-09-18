@@ -1,15 +1,15 @@
 # Known limitations
 
-VoxDock is experimental software for a single self-hosted operator, one configured business backend and one active call. The web console, CLI and API share the same service and SQLite records. Multi-user tenancy, scoped Agent credentials and MCP are not provided.
+VoxDock is experimental software for a single self-hosted operator, one configured business backend and one active call. The web console, CLI and API share the same service and SQLite records. Scoped agent credentials and four source-installed stdio MCP tools are available; they do not provide multi-user tenancy. MCP has no transcript access, inline briefing upload, published npm package or remote HTTP transport. Context must resolve in the configured business backend; automatic notification/routing workers are not included. See [agent integration](agent-integration.md).
 
 ## Calls and platforms
 
 | Area | Current boundary |
 | --- | --- |
 | Telegram | Real account binding and incoming call handshakes have been exercised. Handset audio has not succeeded; complete incoming/outgoing conversations remain unvalidated. |
-| WhatsApp | A real outgoing conversation sustained two minutes, including a GPT-5.6 Sol answer. At the configured duration limit, the receiving iPhone displayed “Call failed”; normal handset termination remains unresolved. |
-| Incoming WhatsApp calls | One incoming conversation was heard on the handset. Later attempts were reported unsuccessful; repeated incoming-call reliability remains unvalidated. Unknown or mismatched identities remain rejected. |
-| WhatsApp connection setup | Full receiving-account message/call verification and unlink/relink recovery remain unvalidated on real devices. |
+| WhatsApp | The maintainer confirmed completion of WhatsApp handset workflow testing on 2026-09-18. This confirmation does not establish broader device/version compatibility or endurance results. |
+| Incoming WhatsApp calls | Covered by the maintainer-confirmed WhatsApp workflow acceptance. Unknown or mismatched identities remain rejected. |
+| WhatsApp connection setup | Receiving-account verification and connection workflows are covered by the maintainer-confirmed WhatsApp acceptance. Broader recovery and backup restoration remain separate operational checks. |
 | GPT-Live-1 | Real session setup, audio, client delegation and final usage have been exercised. Managed Responses/web search has protocol tests but no paid-service call validation. Interruption, longer conversations and end-to-end audio quality require further validation. |
 | Operations | In-place upgrades have checked saved configuration and records. Real-account backup restoration, broader version compatibility and 24-hour endurance have not been validated. |
 
