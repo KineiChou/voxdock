@@ -10,9 +10,13 @@ VoxDock's root license covers its original code, not third-party components. Thi
 | WaCalls vendored MLow | as above, `internal/voip/media/mlow` | MIT, Copyright 2026 Rajeh Taher; upstream README credits purpshell/meowcaller and reference whatsapp-rust implementation |
 | [Mantine](https://github.com/mantinedev/mantine) | 9.6.1 | MIT; UI components and charts, retain distributed license notices |
 | [node-qrcode](https://github.com/soldair/node-qrcode) | 1.5.4 | MIT, Copyright (c) 2012 Ryan Day; local rendering of WhatsApp pairing codes, retain package license |
+| [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) | `@modelcontextprotocol/server`, `client` and `core` 2.0.0 | Package metadata declares MIT; bundled LICENSE describes the MIT/Apache-2.0 transition and preserves MIT for contributions without relicensing consent. Retain the complete applicable upstream license and notices. |
+| [Zod](https://github.com/colinhacks/zod) | 4.6.5 | MIT, Copyright (c) 2025 Colin McDonnell |
 | [React](https://github.com/facebook/react) | 19.3.0 | MIT; frontend runtime |
 | [Recharts](https://github.com/recharts/recharts) | 3.10.1 | MIT; chart rendering through Mantine |
 | [Tabler Icons](https://github.com/tabler/tabler-icons) | 3.46.0 | MIT; interface icons |
+
+The MCP SDK bundled license also identifies non-specification documentation as CC-BY-4.0. Preserve that distinction if redistributing upstream documentation.
 
 The console also uses Vite, React Router and TanStack Query. Fastify plugins provide static assets, secure sessions and rate limiting. The lockfile records the complete installed versions; this selected inventory is not a full transitive license manifest.
 

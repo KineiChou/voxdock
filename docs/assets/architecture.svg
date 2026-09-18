@@ -1,16 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1260" viewBox="0 0 1440 1260" role="img" aria-labelledby="title desc"><title id="title">VoxDock architecture</title><desc id="desc">Operator console, CLI and API use authenticated control and SQLite admission. A shared runtime connects Telegram through an isolated teleproto and NTgCalls worker, or WhatsApp through a private WaCalls sidecar. Continuous PCM flows to GPT-Live-1 over a primary WebSocket. Client delegation reaches an external HTTP backend through the runtime, with signed events and durable result callbacks. Alternatively, Responses delegation executes through OpenAI with optional web search; the backend still supplies context and receives events. Raw audio stays in memory.</desc><defs>
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1340" viewBox="0 0 1440 1340" role="img" aria-labelledby="title desc"><title id="title">VoxDock architecture</title><desc id="desc">Operator console, CLI and API use authenticated control and SQLite admission. A local agent CLI connects to a stdio MCP server, which calls the scoped HTTPS control API. A shared runtime connects Telegram through an isolated teleproto and NTgCalls worker, or WhatsApp through a private WaCalls sidecar. Continuous PCM flows to GPT-Live-1 over a primary WebSocket. Client delegation reaches an external HTTP backend through the runtime, with signed events and durable result callbacks. Alternatively, Responses delegation executes through OpenAI with optional web search; the backend still supplies context and receives events. Raw audio stays in memory.</desc><defs>
 <marker id="control" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 1 1 L 9 5 L 1 9 z" fill="#64748b"/></marker>
 <marker id="audio" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 1 1 L 9 5 L 1 9 z" fill="#0d9488"/></marker>
 <marker id="business" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 1 1 L 9 5 L 1 9 z" fill="#7c3aed"/></marker>
-</defs><g font-family="Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"><rect width="1440" height="1260" rx="24" fill="#f8fafc"/>
+</defs><g font-family="Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"><rect width="1440" height="1340" rx="24" fill="#f8fafc"/>
 <text x="40" y="54" font-size="34" fill="#0f172a" font-weight="750">VoxDock</text>
 <text x="40" y="88" font-size="22" fill="#475569" font-weight="400">A phone conversation connected to your agent backend</text>
-<rect x="40" y="118" width="970" height="113" rx="16" fill="#fff" stroke="#cbd5e1"/><rect x="40" y="136" width="4" height="30" rx="2" fill="#2563eb"/>
+<rect x="40" y="118" width="435" height="113" rx="16" fill="#fff" stroke="#cbd5e1"/><rect x="40" y="136" width="4" height="30" rx="2" fill="#2563eb"/>
 <text x="64" y="161" font-size="24" fill="#0f172a" font-weight="650">Operator</text>
-<text x="64" y="196" font-size="20" fill="#475569" font-weight="400">Web console  ·  CLI  ·  authenticated HTTP API</text>
+<text x="64" y="196" font-size="20" fill="#475569" font-weight="400">Web console · CLI · HTTP API</text>
+<rect x="545" y="118" width="455" height="113" rx="16" fill="#fff" stroke="#cbd5e1"/><rect x="545" y="136" width="4" height="30" rx="2" fill="#2563eb"/>
+<text x="569" y="161" font-size="24" fill="#0f172a" font-weight="650">Local agent</text>
+<text x="569" y="196" font-size="20" fill="#475569" font-weight="400">Agent CLI → stdio MCP server</text>
+<text x="540" y="297" font-size="19" fill="#475569" font-weight="400">Scoped HTTPS API</text>
 <text x="1050" y="157" font-size="16" fill="#64748b" font-weight="650">CONTROL &amp; STATE</text>
 <text x="1050" y="185" font-size="16" fill="#0d9488" font-weight="650">CONTINUOUS AUDIO</text>
 <text x="1050" y="213" font-size="16" fill="#7c3aed" font-weight="650">BUSINESS MESSAGES</text>
+<g transform="translate(0 80)">
 <rect x="24" y="270" width="1000" height="734" rx="24" fill="#eff6ff" stroke="#bfdbfe"/>
 <text x="48" y="308" font-size="16" fill="#1d4ed8" font-weight="700">YOUR HOST</text>
 <text x="660" y="308" font-size="19" fill="#1d4ed8" font-weight="400">One operator · one active call</text>
@@ -24,7 +29,8 @@
 <text x="569" y="411" font-size="20" fill="#475569" font-weight="400">Calls, transcripts &amp; usage</text>
 <text x="569" y="439" font-size="20" fill="#475569" font-weight="400">Delegation receipts &amp; results</text>
 <text x="569" y="467" font-size="20" fill="#475569" font-weight="400">Signed event outbox</text>
-<path d="M 265 231 V 333" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#control)" />
+<path d="M 265 151 V 333" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#control)" />
+<path d="M 770 151 V 230 H 390 V 333" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#control)" />
 <path d="M 483 411 H 545" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#control)" marker-start="url(#control)"/>
 <rect x="48" y="571" width="952" height="153" rx="16" fill="#fff" stroke="#cbd5e1"/><rect x="48" y="589" width="4" height="30" rx="2" fill="#0d9488"/>
 <text x="72" y="614" font-size="24" fill="#0f172a" font-weight="650">Shared call runtime</text>
@@ -84,4 +90,4 @@
 <text x="1080" y="1113" font-size="19" fill="#475569" font-weight="400">Project routing</text>
 <text x="1080" y="1143" font-size="19" fill="#475569" font-weight="400">Long-term memory</text>
 <text x="48" y="1225" font-size="20" fill="#334155" font-weight="400">Raw audio stays in memory. Call records and optional transcripts follow the configured retention policy.</text>
-</g></svg>
+</g></g></svg>
