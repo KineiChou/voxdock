@@ -2,7 +2,7 @@
 
 VoxDock provides four stdio MCP tools for an agent running in Codex, Claude Code or another MCP host. The MCP process connects to your existing bridge through its HTTP control API using a scoped agent credential. It does not run the platform adapters or a second bridge.
 
-This is an experimental, source-installed integration. There is no published npm package or remote HTTP MCP endpoint. [Platform and handset limitations](limitations.md) still apply.
+This is an experimental, source-installed integration available on `main` after the v0.1.0 tag. There is no published npm package or remote HTTP MCP endpoint. [Platform and handset limitations](limitations.md) still apply.
 
 ## Prepare the bridge and context
 

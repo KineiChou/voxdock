@@ -58,6 +58,7 @@ const status = z
   );
 const capabilities = z.object({
   calling_enabled: z.boolean(),
+  server_time: timestamp.optional(),
   max_request_ttl_seconds: z.number().int().positive().optional(),
 });
 export type ControlErrorCode =
@@ -115,8 +116,8 @@ export class ControlClient {
   }
   async listTargets() {
     const targets = await this.request("/v1/targets", z.array(target));
-    const caps = await this.request("/v1/capabilities", capabilities);
-    return { current_time: new Date().toISOString(), targets, ...caps };
+    const { server_time, ...caps } = await this.request("/v1/capabilities", capabilities);
+    return { current_time: server_time ?? new Date().toISOString(), targets, ...caps };
   }
   async createCall(input: CallInput): Promise<CallStatus> {
     const parsed = callInput.safeParse(input);

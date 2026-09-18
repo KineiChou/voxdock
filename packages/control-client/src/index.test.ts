@@ -12,6 +12,15 @@ const input = {
   idempotency_key: "stable-key",
 };
 
+test("expiry guidance uses bridge time even when the local clock differs", async () => {
+  const serverTime = "2026-09-18T00:00:00.000Z";
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(Response.json([]))
+    .mockResolvedValueOnce(Response.json({ calling_enabled: true, server_time: serverTime, max_request_ttl_seconds: 120 }));
+  vi.stubGlobal("fetch", fetchMock);
+  expect((await client().listTargets()).current_time).toBe(serverTime);
+});
+
 test("only a fixed HTTPS origin or loopback HTTP and a bounded timeout are accepted", () => {
   for (const origin of [
     "http://voice.example",
