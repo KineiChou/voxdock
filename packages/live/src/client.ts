@@ -145,7 +145,7 @@ export class LiveClient {
       if (typeof e.delta !== 'string' || !time(e.start_ms) || !time(e.end_ms) || e.end_ms < e.start_ms) { this.finish(false, 'invalid_transcript'); return; }
       this.emit({ type: 'transcript', speaker: e.type === 'session.input_transcript.delta' ? 'user' : 'assistant', delta: e.delta, startMs: e.start_ms, endMs: e.end_ms, ...(typeof e.event_id === 'string' ? { eventId: e.event_id } : {}) });
     } else if (e.type === 'session.delegation.created' && this.state === 'ready') {
-      if (!object(e.delegation) || typeof e.delegation.id !== 'string' || !['client', 'responses'].includes(String(e.delegation.target)) || !time(e.offset_ms)) { this.finish(false, 'invalid_delegation'); return; }
+      if (!object(e.delegation) || typeof e.delegation.id !== 'string' || e.delegation.target !== this.config.delegation.type || !time(e.offset_ms)) { this.finish(false, 'invalid_delegation'); return; }
       if (this.delegations.has(e.delegation.id)) return;
       if (this.delegations.size >= 1024) { this.finish(false, 'delegation_limit'); return; }
       const target = e.delegation.target as 'client' | 'responses';

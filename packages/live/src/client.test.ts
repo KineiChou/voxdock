@@ -126,3 +126,15 @@ it('ignores managed envelopes attached to client delegations and rejects unsuppo
   s.client.close(); s.handlers().close();
   expect(() => setup({ delegation: { type: 'responses', responses: { model: 'test', tools: [{ type: 'function', name: 'write' }] } } })).toThrow('Unsupported');
 });
+
+it.each([
+  [{ type: 'client' }, 'responses'],
+  [{ type: 'responses', responses: { model: 'gpt-5.6-luna' } }, 'client'],
+  [{ type: 'client' }, 'unknown'],
+])('fails closed when provider delegation target conflicts with the configured mode', (delegation, target) => {
+  const s = setup({ delegation }); s.ready();
+  s.receive({ type: 'session.delegation.created', delegation: { id: 'unexpected', target }, offset_ms: 0 });
+  expect(s.events.some(event => event.type === 'delegation')).toBe(false);
+  expect(s.events.at(-1)).toMatchObject({ type: 'closed', finalization: 'incomplete', reason: 'invalid_delegation' });
+  expect(s.transport.terminate).toHaveBeenCalledOnce();
+});
