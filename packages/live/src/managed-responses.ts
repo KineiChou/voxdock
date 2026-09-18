@@ -101,7 +101,7 @@ export class ManagedResponses {
     if (state.urls.size >= 20 || !object(value) || value.type !== 'url_citation' || typeof value.url !== 'string' || value.url.length > 2048) return;
     try {
       const url = new URL(value.url);
-      if (['https:', 'http:'].includes(url.protocol) && !url.username && !url.password) state.urls.add(url.href);
+      if (['https:', 'http:'].includes(url.protocol) && !url.username && !url.password && url.href.length <= 2048) state.urls.add(url.href);
     } catch { /* A malformed citation is not evidence. */ }
   }
   clear(): void { this.active.clear(); this.owners.clear(); this.itemOwners.clear(); this.completed.clear(); }

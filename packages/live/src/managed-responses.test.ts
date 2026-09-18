@@ -43,7 +43,7 @@ describe('managed Responses collection', () => {
   it('bounds text and deduplicates bounded HTTP URL evidence', () => {
     const parser = new ManagedResponses(); parser.receive('d', created('r'));
     parser.receive('d', delta('msg', 'x'.repeat(5000), 1));
-    for (const url of ['https://example.com/0', 'https://example.com/0', 'javascript:alert(1)', 'https://user:pass@example.com/', ...Array.from({ length: 30 }, (_, n) => `https://example.com/${n}`)]) {
+    for (const url of ['https://example.com/0', 'https://example.com/0', 'javascript:alert(1)', 'https://user:pass@example.com/', `https://example.com/${'界'.repeat(300)}`, ...Array.from({ length: 30 }, (_, n) => `https://example.com/${n}`)]) {
       parser.receive('d', { type: 'response.output_text.annotation.added', item_id: 'msg', annotation: { type: 'url_citation', url } });
     }
     const result = parser.receive('d', terminal('r'))!;
