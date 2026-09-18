@@ -86,10 +86,10 @@ codex mcp add voxdock \
 **Claude Code CLI:**
 
 ```sh
-claude mcp add --transport stdio --scope user \
+claude mcp add voxdock --transport stdio --scope user \
   -e VOXDOCK_BASE_URL=https://voice.example.com \
   -e VOXDOCK_AGENT_TOKEN_FILE=/absolute/private/voxdock-agent.token \
-  voxdock -- /absolute/node24/bin/node /absolute/voxdock/apps/mcp/bin/voxdock-mcp.mjs
+  -- /absolute/node24/bin/node /absolute/voxdock/apps/mcp/bin/voxdock-mcp.mjs
 ```
 
 Use your host's MCP tool permissions to review outbound-call requests. Do not grant blanket call authorization simply because the credential has permission to a target.
