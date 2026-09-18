@@ -1,3 +1,4 @@
+import { runAgentCommand } from './cli-agents.js';
 import { existsSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { CallStore } from "@voxdock/core";
@@ -19,6 +20,10 @@ import { doctor } from "./cli-doctor.js";
 import { acquireProcessLock } from "./cli-lock.js";
 import { startService, type RuntimeFactory } from "./cli-service.js";
 const help = `VoxDock commands:
+  agent list
+  agent create --name NAME --target ID[,ID] [--allow-end] --out NEW_FILE
+  agent rotate ID --out NEW_FILE
+  agent revoke ID
   init DIRECTORY
   doctor [--online]
   serve
@@ -61,7 +66,7 @@ function argumentsOf(args: string[]) {
     const arg = args[index]!;
     if (arg.startsWith("--")) {
       const name = arg.slice(2);
-      if (name === "online" || name === "confirm-ended" || name === "redact") {
+      if (name === "online" || name === "confirm-ended" || name === "redact" || name === "allow-end") {
         flags.add(name);
         continue;
       }
@@ -106,6 +111,7 @@ export async function runCli(
     return;
   }
   const allowed: Record<string, string[]> = {
+    agent: ["config", "name", "target", "out"],
     init: [],
     doctor: ["config"],
     serve: ["config"],
@@ -138,7 +144,7 @@ export async function runCli(
     !allowed[command] ||
     Object.keys(values).some((key) => !allowed[command]!.includes(key)) ||
     [...flags].some((flag) =>
-      flag === "online"
+      flag === "allow-end" ? command !== "agent" : flag === "online"
         ? command !== "doctor" && command !== "resume"
         : flag === "redact"
           ? command !== "audit"
@@ -146,7 +152,7 @@ export async function runCli(
     )
   )
     throw new CliError("invalid_arguments");
-  const expected =
+  const expected = command === "agent" ? 3 :
     command === "init" ||
     command === "end" ||
     command === "reconcile" ||
@@ -207,6 +213,10 @@ export async function runCli(
       ...options,
       ...(dependencies.fetch ? { fetch: dependencies.fetch } : {}),
     });
+  if (command === 'agent') {
+    await runAgentCommand(positionals[1], positionals[2], values, flags.has('allow-end'), request, output);
+    return;
+  }
   if (command === 'configuration') {
     output(await request('/v1/console/settings/configuration', values.file ? { method: 'PUT', body: JSON.parse(readPrivateText(values.file)), timeoutMs: 60000 } : {}));
     return;

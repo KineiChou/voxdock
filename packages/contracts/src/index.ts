@@ -169,3 +169,5 @@ export type * from './console-connections.js';
 export type * from './console-pairing.js';
 
 export * from './live-settings.js';
+
+export * from './agent-access.js';

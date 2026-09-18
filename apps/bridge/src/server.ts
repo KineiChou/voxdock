@@ -1,3 +1,7 @@
+import { registerAgentRoutes } from './agent-routes.js';
+import type { AgentCredentials } from './agent-credentials.js';
+import type { AgentCredential } from '@voxdock/contracts';
+import type { FastifyRequest } from 'fastify';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import Fastify, { type FastifyReply } from 'fastify';
 import { registerConsole, type ConsoleOptions } from './console-auth.js';
@@ -18,6 +22,7 @@ import type { BridgeConfig } from '@voxdock/config';
 import { CallStore, DomainError } from '@voxdock/core';
 
 export interface BridgeServerOptions {
+  agents?: AgentCredentials;
   config: BridgeConfig;
   console?: ConsoleOptions;
   store: CallStore;
@@ -45,6 +50,7 @@ export async function createBridgeServer(options: BridgeServerOptions) {
   const activeTargets = () => config.targets.filter(t => t.enabled && config.channels[t.channel].enabled);
   const app = Fastify({ logger: false, bodyLimit: 64 * 1024,
     ajv: { customOptions: { removeAdditional: false, coerceTypes: false } } });
+  const agents = new WeakMap<FastifyRequest, AgentCredential>();
   let closing = false;
   app.addHook('onClose', async () => { closing = true; });
   const expected = tokenDigest(`Bearer ${options.controlToken}`);
@@ -64,7 +70,12 @@ export async function createBridgeServer(options: BridgeServerOptions) {
     if (options.console && (route.startsWith('/admin/v1/') || route.startsWith('/console') || route === '/')) return;
     const authorization = request.headers.authorization ?? '';
     if (!timingSafeEqual(tokenDigest(authorization), expected)) {
-      return reply.code(401).send({ error: 'unauthorized' });
+      const agent = authorization.startsWith('Bearer ') ? options.agents?.authenticate(authorization.slice(7)) : undefined;
+      if (!agent) return reply.code(401).send({ error: 'unauthorized' });
+      const allowed = (request.method === 'GET' && ['/v1/capabilities', '/v1/targets', '/v1/calls/:call_id'].includes(route)) ||
+        (request.method === 'POST' && (route === '/v1/calls' || (route === '/v1/calls/:call_id/end' && agent.can_end_calls)));
+      if (!allowed) return reply.code(403).send({ error: 'forbidden' });
+      agents.set(request, agent);
     }
   });
   app.setErrorHandler((error, _request, reply) => {
@@ -90,7 +101,7 @@ export async function createBridgeServer(options: BridgeServerOptions) {
   app.get('/healthz', async () => ({ status: 'ok' }));
   app.get('/v1/openapi.json', async () => app.swagger());
   app.get('/v1/capabilities', async () => ({
-    schema_version: 1, implementation_version: '0.1.0', mode: options.mode ?? 'native',
+    schema_version: 1, implementation_version: '0.1.0', server_time: new Date().toISOString(), max_request_ttl_seconds: config.calling.max_request_ttl_seconds, mode: options.mode ?? 'native',
     calling_enabled: config.calling.enabled && !store.isPaused(false),
     max_concurrent_calls: 1,
     channels: Object.fromEntries((['telegram', 'whatsapp'] as const).map(channel => [channel, {
@@ -98,7 +109,7 @@ export async function createBridgeServer(options: BridgeServerOptions) {
       reason: ready.has(channel) ? null : 'adapter_not_ready',
     }])),
   }));
-  app.get('/v1/targets', async () => activeTargets().map(t => ({
+  app.get('/v1/targets', async request => agents.has(request) ? activeTargets().filter(t => agents.get(request)!.allowed_targets.includes(t.id)).map(t => ({ id: t.id, channel: t.channel, enabled: t.enabled })) : activeTargets().map(t => ({
     id: t.id, channel: t.channel, account_ref: t.account_ref, principal_ref: t.principal_ref, enabled: t.enabled,
   })));
   app.get('/v1/calls', async () => ({ calls: store.listCalls() }));
@@ -110,7 +121,9 @@ export async function createBridgeServer(options: BridgeServerOptions) {
       return reply.code(400).send({ error: 'idempotency_key_required' });
     }
     const target = activeTargets().find(t => t.id === request.body.target_id);
-    const result = store.createCall('operator', key, request.body, {
+    const agent = agents.get(request);
+    if (agent && !agent.allowed_targets.includes(request.body.target_id)) throw new DomainError('forbidden', 403);
+    const result = store.createCall(agent ? `agent:${agent.id}` : 'operator', key, request.body, {
       enabled: config.calling.enabled && !store.isPaused(false) && !!target && ready.has(target.channel) && !!options.onCallCreated,
       allowedTargets: new Set(activeTargets().map(t => t.id)), maxTtlSeconds: config.calling.max_request_ttl_seconds,
       ...(target ? { channel: target.channel } : {}),
@@ -123,7 +136,13 @@ export async function createBridgeServer(options: BridgeServerOptions) {
   });
   app.get<{ Params: { call_id: string } }>('/v1/calls/:call_id', {
     schema: { params: idParams, response: { 200: CallStatusSchema } },
-  }, async request => getCall(request.params.call_id));
+  }, async request => scopedCall(request, request.params.call_id));
+  const scopedCall = (request: FastifyRequest, id: string) => {
+    const call = getCall(id);
+    const agent = agents.get(request);
+    if (agent && (!agent.allowed_targets.includes(call.target_id) || !store.ownsCall(`agent:${agent.id}`, id))) throw new DomainError('call_not_found', 404);
+    return call;
+  };
   const endCall = (id: string, reply: FastifyReply) => {
     const call = getCall(id);
     if (call.state === 'uncertain') throw new DomainError('reconciliation_required', 409);
@@ -134,12 +153,13 @@ export async function createBridgeServer(options: BridgeServerOptions) {
     setImmediate(() => { if (closing) return; void options.onEnd!(ending).catch(() => failDispatch(call.call_id)); });
     return reply.code(202).send(ending);
   };
-  app.post<{ Params: { call_id: string } }>('/v1/calls/:call_id/end', { schema: { params: idParams } }, async (request, reply) => endCall(request.params.call_id, reply));
+  app.post<{ Params: { call_id: string } }>('/v1/calls/:call_id/end', { schema: { params: idParams } }, async (request, reply) => { scopedCall(request, request.params.call_id); return endCall(request.params.call_id, reply); });
   const consoleService = createConsoleService(options);
   app.post('/v1/control/pause', async () => consoleService.pause());
   app.post('/v1/control/resume', async () => consoleService.resume());
   registerConsoleRoutes(app, '/v1/console', options, endCall);
-  if (options.console) await registerConsole(app, options.console, admin => registerConsoleRoutes(admin, '', options, endCall));
+  registerAgentRoutes(app, '/v1/console', options);
+  if (options.console) await registerConsole(app, options.console, admin => { registerConsoleRoutes(admin, '', options, endCall); registerAgentRoutes(admin, '', options); });
   app.get<{ Querystring: { after?: string; limit?: string } }>('/v1/events', async (request, reply) => {
     const { after = '0', limit = '100' } = request.query;
     if (!/^\d+$/.test(after) || !/^\d+$/.test(limit) || !Number.isSafeInteger(Number(after)) || Number(limit) < 1 || Number(limit) > 500) {

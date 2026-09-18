@@ -76,6 +76,9 @@ export class CallStore {
     this.now = options.now ?? (() => new Date());
     this.persistTranscripts = options.persistTranscripts ?? true;
   }
+  ownsCall(client: string, callId: string): boolean {
+    return !!this.db.prepare('SELECT 1 FROM commands WHERE client=? AND call_id=? LIMIT 1').get(client, callId);
+  }
   consoleCalls(query: ConsoleCallQuery = {}) {
     return new ConsoleQueries(this.db, this.now).calls(query);
   }
