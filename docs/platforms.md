@@ -1,6 +1,6 @@
 # Native platform adapters
 
-Evidence dates: 2026-09-16–17. A WhatsApp account paired on the ARM64 server. After a first outgoing call ended with `audio_failed`, the pacing fix sustained normal conversation to a 120-second limit; the phone still displayed “Call failed” on termination. A callback exposed a device-qualified LID parsing defect, now fixed in code and awaiting handset retest. Native test results below were originally account-free; see [phone acceptance](acceptance.md#two-minute-retest-and-incoming-rejection-2026-09-17) for the limits of the real-call evidence. Telegram handset calls remain unverified.
+Telegram uses an isolated teleproto/NTgCalls worker. WhatsApp uses the pinned WaCalls sidecar with controlled media and identity patches. Real account binding and incoming Telegram handshakes have been exercised; handset audio remains unvalidated. WhatsApp has sustained a two-minute Live/backend conversation, with unresolved handset termination and incoming-call retest requirements. See [known limitations](limitations.md).
 
 ## Locked upstreams
 
@@ -10,7 +10,7 @@ Evidence dates: 2026-09-16–17. A WhatsApp account paired on the ARM64 server. 
 | teleproto | npm `1.229.0`, source `9b0ebd11151af3e362842b826e704e97ab398fa5` | Public phone request/accept/confirm/discard/signaling exports verified on Node 24 |
 | WaCalls | `edeb31f0427aba896639db503153b777a405eccf` | Go 1.26.4 build succeeds for macOS arm64 and Linux amd64, CGO disabled for Linux |
 
-NTgCalls native loading, byte ABI, external PCM input and cleanup also pass on Linux x64 Node 24, both on the CI host and inside the Debian bridge image. The WaCalls image starts with an empty account store in Linux CI. NTgCalls remains a prerelease dependency; these account-free checks do not establish real call negotiation or handset audio. See [acceptance evidence](acceptance.md).
+NTgCalls native loading, byte ABI, external PCM input and cleanup also pass on Linux x64 Node 24, both on the CI host and inside the Debian bridge image. The WaCalls image starts with an empty account store in Linux CI. NTgCalls remains a prerelease dependency; these account-free checks do not establish real call negotiation or handset audio. See [known limitations](limitations.md).
 
 ### MTProto selection
 
@@ -50,6 +50,6 @@ The rc03 generated TypeScript declarations label byte inputs as `Buffer`, but th
 
 `TelegramDriver` accepts an authorized client, configured account/target IDs and state/audio/incoming callbacks. It exposes `dial(targetId, signal)`, `accept(ref, signal)`, `reject(ref)`, `end(ref)`, `writeAudio(ref, pcm)` and `close()`. Caller must reserve durable global capacity before dial/accept. Native audio is 48 kHz mono PCM16LE in 10 ms (960-byte) frames; the host supplies pacing and bounded queues. Platform `connected` and `onAudioReady` are separate. Incoming offers only produce callbacks; the manager decides admission. Unknown, foreign or video callers cannot be accepted. Platform uncertainty preserves the active reservation, and terminal discard evidence is required before admitting another call.
 
-Fixture/identity/transport tests and strict TypeScript checks pass. The pinned WaCalls patch also passes server/core tests and race checks. Native account-free create/external input/stop and byte ABI smoke pass on macOS arm64 and Linux x64 Node 24.21.0. Exact runs are linked in [acceptance](acceptance.md); no platform login, actual negotiation or audio quality claim follows from them.
+Fixture/identity/transport tests and strict TypeScript checks pass. The pinned WaCalls patch also passes server/core tests and race checks. Native account-free create/external input/stop and byte ABI smoke pass on macOS arm64 and Linux x64 Node 24.21.0. These checks cover local protocol and media boundaries; they do not establish end-to-end audio quality. See [known limitations](limitations.md).
 
 Failure cleanup attempts one correlated platform discard when a provider reference exists; native cleanup failure does not suppress that attempt. The reservation clears only with terminal platform evidence and successful native cleanup. Updates remain subscribed during explicit close. Tests cover stale same-target updates arriving before the dial response and failed native connection cleanup.

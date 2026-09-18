@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1260" viewBox="0 0 1440 1260" role="img" aria-labelledby="title desc"><title id="title">VoxDock architecture</title><desc id="desc">Operator console, CLI and API use authenticated control and SQLite admission. A shared runtime connects Telegram through an isolated teleproto and NTgCalls worker, or WhatsApp through a private WaCalls sidecar. Continuous PCM flows to GPT-Live-1 over a primary WebSocket. Client delegation reaches an external HTTP backend through the runtime, with signed events and durable result callbacks. Alternatively, Responses delegation executes through OpenAI with optional web search; the backend still supplies context and receives events. Raw audio stays in memory.</desc><defs>
+<marker id="control" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 1 1 L 9 5 L 1 9 z" fill="#64748b"/></marker>
+<marker id="audio" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 1 1 L 9 5 L 1 9 z" fill="#0d9488"/></marker>
+<marker id="business" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 1 1 L 9 5 L 1 9 z" fill="#7c3aed"/></marker>
+</defs><g font-family="Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"><rect width="1440" height="1260" rx="24" fill="#f8fafc"/>
+<text x="40" y="54" font-size="34" fill="#0f172a" font-weight="750">VoxDock</text>
+<text x="40" y="88" font-size="22" fill="#475569" font-weight="400">A phone conversation connected to your agent backend</text>
+<rect x="40" y="118" width="970" height="113" rx="16" fill="#fff" stroke="#cbd5e1"/><rect x="40" y="136" width="4" height="30" rx="2" fill="#2563eb"/>
+<text x="64" y="161" font-size="24" fill="#0f172a" font-weight="650">Operator</text>
+<text x="64" y="196" font-size="20" fill="#475569" font-weight="400">Web console  ·  CLI  ·  authenticated HTTP API</text>
+<text x="1050" y="157" font-size="16" fill="#64748b" font-weight="650">CONTROL &amp; STATE</text>
+<text x="1050" y="185" font-size="16" fill="#0d9488" font-weight="650">CONTINUOUS AUDIO</text>
+<text x="1050" y="213" font-size="16" fill="#7c3aed" font-weight="650">BUSINESS MESSAGES</text>
+<rect x="24" y="270" width="1000" height="734" rx="24" fill="#eff6ff" stroke="#bfdbfe"/>
+<text x="48" y="308" font-size="16" fill="#1d4ed8" font-weight="700">YOUR HOST</text>
+<text x="660" y="308" font-size="19" fill="#1d4ed8" font-weight="400">One operator · one active call</text>
+<rect x="48" y="333" width="435" height="166" rx="16" fill="#fff" stroke="#cbd5e1"/><rect x="48" y="351" width="4" height="30" rx="2" fill="#2563eb"/>
+<text x="72" y="376" font-size="24" fill="#0f172a" font-weight="650">Control service</text>
+<text x="72" y="411" font-size="20" fill="#475569" font-weight="400">Authentication &amp; managed settings</text>
+<text x="72" y="439" font-size="20" fill="#475569" font-weight="400">Fixed targets · limits · idempotency</text>
+<text x="72" y="467" font-size="20" fill="#475569" font-weight="400">Admission, pause &amp; recovery</text>
+<rect x="545" y="333" width="455" height="166" rx="16" fill="#fff" stroke="#cbd5e1"/><rect x="545" y="351" width="4" height="30" rx="2" fill="#7c3aed"/>
+<text x="569" y="376" font-size="24" fill="#0f172a" font-weight="650">SQLite ledger</text>
+<text x="569" y="411" font-size="20" fill="#475569" font-weight="400">Calls, transcripts &amp; usage</text>
+<text x="569" y="439" font-size="20" fill="#475569" font-weight="400">Delegation receipts &amp; results</text>
+<text x="569" y="467" font-size="20" fill="#475569" font-weight="400">Signed event outbox</text>
+<path d="M 265 231 V 333" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#control)" />
+<path d="M 483 411 H 545" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#control)" marker-start="url(#control)"/>
+<rect x="48" y="571" width="952" height="153" rx="16" fill="#fff" stroke="#cbd5e1"/><rect x="48" y="589" width="4" height="30" rx="2" fill="#0d9488"/>
+<text x="72" y="614" font-size="24" fill="#0f172a" font-weight="650">Shared call runtime</text>
+<text x="72" y="649" font-size="20" fill="#475569" font-weight="400">Lifecycle coordination · bounded PCM queues · audio pacing</text>
+<text x="72" y="677" font-size="20" fill="#475569" font-weight="400">Context before dialing / greeting · client delegation · result delivery</text>
+<path d="M 265 499 V 571" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#control)" />
+<path d="M 770 571 V 499" fill="none" stroke="#64748b" stroke-width="2.5"  marker-end="url(#control)" marker-start="url(#control)"/>
+<text x="62" y="548" font-size="17" fill="#475569" font-weight="400">admitted call</text>
+<text x="792" y="548" font-size="17" fill="#475569" font-weight="400">durable state</text>
+<rect x="48" y="801" width="435" height="165" rx="16" fill="#fff" stroke="#cbd5e1"/><rect x="48" y="819" width="4" height="30" rx="2" fill="#0d9488"/>
+<text x="72" y="844" font-size="24" fill="#0f172a" font-weight="650">Telegram worker</text>
+<text x="72" y="879" font-size="20" fill="#475569" font-weight="400">teleproto + NTgCalls · isolated process</text>
+<text x="72" y="907" font-size="20" fill="#475569" font-weight="400">IPC signaling &amp; PCM</text>
+<text x="72" y="935" font-size="20" fill="#475569" font-weight="400">FFmpeg 48 ↔ 24 kHz</text>
+<rect x="545" y="801" width="455" height="165" rx="16" fill="#fff" stroke="#cbd5e1"/><rect x="545" y="819" width="4" height="30" rx="2" fill="#0d9488"/>
+<text x="569" y="844" font-size="24" fill="#0f172a" font-weight="650">WhatsApp / WaCalls</text>
+<text x="569" y="879" font-size="20" fill="#475569" font-weight="400">Private Go sidecar + PCM patch</text>
+<text x="569" y="907" font-size="20" fill="#475569" font-weight="400">HTTP control · SSE signaling</text>
+<text x="569" y="935" font-size="20" fill="#475569" font-weight="400">Authenticated media WS · 16 kHz</text>
+<path d="M 265 724 V 801" fill="none" stroke="#0d9488" stroke-width="2.5"  marker-end="url(#audio)" marker-start="url(#audio)"/>
+<path d="M 770 724 V 801" fill="none" stroke="#0d9488" stroke-width="2.5"  marker-end="url(#audio)" marker-start="url(#audio)"/>
+<rect x="48" y="1070" width="435" height="110" rx="16" fill="#fff" stroke="#cbd5e1"/><rect x="48" y="1088" width="4" height="30" rx="2" fill="#0d9488"/>
+<text x="72" y="1113" font-size="24" fill="#0f172a" font-weight="650">Telegram phone</text>
+<text x="72" y="1148" font-size="20" fill="#475569" font-weight="400">Bound receiving account</text>
+<rect x="545" y="1070" width="455" height="110" rx="16" fill="#fff" stroke="#cbd5e1"/><rect x="545" y="1088" width="4" height="30" rx="2" fill="#0d9488"/>
+<text x="569" y="1113" font-size="24" fill="#0f172a" font-weight="650">WhatsApp phone</text>
+<text x="569" y="1148" font-size="20" fill="#475569" font-weight="400">Bound receiving account</text>
+<path d="M 265 966 V 1070" fill="none" stroke="#0d9488" stroke-width="2.5"  marker-end="url(#audio)" marker-start="url(#audio)"/>
+<path d="M 770 966 V 1070" fill="none" stroke="#0d9488" stroke-width="2.5"  marker-end="url(#audio)" marker-start="url(#audio)"/>
+<text x="281" y="1040" font-size="17" fill="#0f766e" font-weight="400">platform call</text>
+<text x="786" y="1040" font-size="17" fill="#0f766e" font-weight="400">platform call</text>
+<rect x="1064" y="333" width="344" height="285" rx="16" fill="#fff" stroke="#cbd5e1"/><rect x="1064" y="351" width="4" height="30" rx="2" fill="#0d9488"/>
+<text x="1088" y="376" font-size="24" fill="#0f172a" font-weight="650">GPT-Live-1</text>
+<text x="1088" y="411" font-size="20" fill="#475569" font-weight="400">Primary WebSocket · PCM</text>
+<text x="1088" y="439" font-size="20" fill="#475569" font-weight="400">Transcript fragments</text>
+<text x="1088" y="467" font-size="20" fill="#475569" font-weight="400">Choose one delegation mode:</text>
+<text x="1088" y="495" font-size="20" fill="#475569" font-weight="400">Client → your backend</text>
+<text x="1088" y="523" font-size="20" fill="#475569" font-weight="400">Responses → OpenAI model</text>
+<text x="1088" y="551" font-size="20" fill="#475569" font-weight="400">Optional web search</text>
+<text x="1088" y="579" font-size="20" fill="#475569" font-weight="400">in Responses mode</text>
+<path d="M 1000 601 H 1035 V 433 H 1064" fill="none" stroke="#0d9488" stroke-width="2.5"  marker-end="url(#audio)" marker-start="url(#audio)"/>
+<rect x="1064" y="724" width="344" height="279" rx="16" fill="#fff" stroke="#cbd5e1"/><rect x="1064" y="742" width="4" height="30" rx="2" fill="#7c3aed"/>
+<text x="1088" y="767" font-size="24" fill="#0f172a" font-weight="650">HTTP agent backend</text>
+<text x="1088" y="802" font-size="20" fill="#475569" font-weight="400">Context &amp; signed events</text>
+<text x="1088" y="830" font-size="20" fill="#475569" font-weight="400">Client-mode execution</text>
+<text x="1088" y="858" font-size="20" fill="#475569" font-weight="400">Durable result callbacks</text>
+<text x="1088" y="886" font-size="20" fill="#475569" font-weight="400"></text>
+<text x="1088" y="914" font-size="20" fill="#475569" font-weight="400">Example: simulation or</text>
+<text x="1088" y="942" font-size="20" fill="#475569" font-weight="400">OpenAI Responses</text>
+<text x="1088" y="970" font-size="20" fill="#475569" font-weight="400">gpt-5.6-sol text assistance</text>
+<path d="M 1000 665 H 1236 V 724" fill="none" stroke="#7c3aed" stroke-width="2.5"  marker-end="url(#business)" />
+<text x="1068" y="635" font-size="17" fill="#7c3aed" font-weight="400">context / events · both modes</text>
+<text x="1068" y="661" font-size="17" fill="#7c3aed" font-weight="400">delegations / results · client</text>
+<path d="M 1064 775 H 1048 V 254 H 440 V 333" fill="none" stroke="#7c3aed" stroke-width="2.5" stroke-dasharray="7 6" marker-end="url(#business)" />
+<text x="1080" y="1050" font-size="21" fill="#0f172a" font-weight="650">Your business owns</text>
+<text x="1080" y="1083" font-size="19" fill="#475569" font-weight="400">Tasks &amp; permissions</text>
+<text x="1080" y="1113" font-size="19" fill="#475569" font-weight="400">Project routing</text>
+<text x="1080" y="1143" font-size="19" fill="#475569" font-weight="400">Long-term memory</text>
+<text x="48" y="1225" font-size="20" fill="#334155" font-weight="400">Raw audio stays in memory. Call records and optional transcripts follow the configured retention policy.</text>
+</g></svg>

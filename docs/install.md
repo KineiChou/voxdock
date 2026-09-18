@@ -1,10 +1,12 @@
 # Install and operate
 
-VoxDock is a source alpha for one self-hosted operator. These instructions distinguish a paused local control service from enabling a real platform and paid Live session. Real-call acceptance is still open; see [acceptance](acceptance.md).
+Install VoxDock for one self-hosted operator. Start with a paused local service, then configure Live, a backend and a calling account. Review [known limitations](limitations.md) before enabling real calls.
+
+Choose [source installation](#source-service) or a [local Docker build](#local-docker-build). For guided configuration and account linking, use the [operator console](console.md); the [operations guide](operations.md) covers CLI controls.
 
 ## Source service
 
-Use Node 24, pnpm 10.17.1 and a local filesystem for SQLite. Install FFmpeg on `PATH` before using Telegram audio; it converts 48 kHz platform PCM to/from 24 kHz Live PCM. Install dependencies with `pnpm install --frozen-lockfile`, then run `pnpm typecheck` and `pnpm test`.
+Use Node 24, pnpm 10.17.1 and a local filesystem for SQLite. Install FFmpeg on `PATH` before using Telegram audio; it converts 48 kHz platform PCM to/from 24 kHz Live PCM. Install dependencies with `pnpm install --frozen-lockfile`, then run `pnpm build` to build the console. Contributor checks are documented in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ```sh
 pnpm voxdock init ./local
@@ -111,4 +113,4 @@ Real account backup/restore and version upgrades remain acceptance tasks. Automa
 
 These definitions download native dependencies for the operator's local build. NTgCalls is LGPL-3.0-only and its npm artifact's metadata does not constitute a complete source/notice bundle. FFmpeg and transitive native libraries have separate obligations. Do not infer that the root MIT license covers the resulting image. A published binary/image release requires a corresponding-source and notice inventory, immutable dependency/image provenance and applicable license review. Those release gates are not completed here.
 
-When reporting an issue, include the source commit, OS/architecture, Node version, sanitized `doctor` output and the observed call state. Do not attach tokens, account sessions, QR codes, raw audio or private transcripts. See [acceptance](acceptance.md) for the difference between local test coverage and unverified real-world behavior.
+When reporting an issue, include the source commit, OS/architecture, Node version, sanitized `doctor` output and the observed call state. Do not attach tokens, account sessions, QR codes, raw audio or private transcripts. See [known limitations](limitations.md) for current platform and operational boundaries.
