@@ -1,6 +1,6 @@
 import { test, expect, vi } from 'vitest';
 import { CallStore } from '@voxdock/core';
-import { parseConfig } from '@voxdock/config';
+import { parseConfig, type BridgeConfig } from '@voxdock/config';
 import type { DelegationResult, Delegation, BackendContext } from '@voxdock/contracts';
 import type { LiveEvent } from '@voxdock/live';
 import { PassThrough } from 'node:stream';
@@ -36,7 +36,7 @@ test.each(['channel', 'target', 'both', 'unbound'])('starts safely without a cal
     expect(context).not.toHaveBeenCalled(); expect(voice).not.toHaveBeenCalled(); expect(live).not.toHaveBeenCalled();
   } finally { await runtime.close(); store.close(); }
 });
-async function fixture(options: { connect?: boolean; obsolete?: boolean; maxSeconds?: number; liveReady?: boolean; language?: string } = {}) {
+async function fixture(options: { connect?: boolean; obsolete?: boolean; maxSeconds?: number; liveReady?: boolean; language?: string; live?: Partial<BridgeConfig['live']> } = {}) {
   const store = new CallStore(':memory:');
   let callbacks!: VoiceEvents;
   let emit!: (event: LiveEvent) => void;
@@ -53,6 +53,7 @@ async function fixture(options: { connect?: boolean; obsolete?: boolean; maxSeco
   const settings = config();
   settings.calling.max_call_seconds = options.maxSeconds ?? 2;
   settings.live.language = options.language ?? settings.live.language;
+  Object.assign(settings.live, options.live);
   const instruction = vi.fn((text: string) => { output.push({ kind: 'instructions', text }); return 'append'; });
   const runtime = await createRuntime({ config: settings, store }, {
     backend: { context, delegate, deliverEvent }, environment: () => '123', resampler: () => new PassThrough(),
@@ -216,5 +217,54 @@ test('audio overflow records its fixed boundary reason before platform cleanup',
     await f.flush();
     expect(f.end).toHaveBeenCalledOnce();
     expect(f.store.getCall(call.call_id)).toMatchObject({ state: 'ended', reason: 'audio_output_overflow' });
+  } finally { await f.close(); }
+});
+
+test('Telegram media reason survives failed cleanup and later terminal confirmation', async () => {
+  const f = await fixture({ connect: false });
+  try {
+    const call = request(f.store); await f.runtime.onCallCreated(call);
+    f.end.mockRejectedValueOnce(new Error('provider no longer has the call'));
+    f.callbacks.state('provider', 'uncertain', 'telegram_media_connect_failed'); await f.flush();
+    expect(f.store.getCall(call.call_id)).toMatchObject({ state: 'uncertain', reason: 'telegram_media_connect_failed' });
+    f.callbacks.state('provider', 'ended');
+    expect(f.store.getCall(call.call_id)).toMatchObject({ state: 'ended', reason: 'telegram_media_connect_failed' });
+    expect(f.liveStarts()).toBe(0);
+  } finally { await f.close(); }
+});
+
+test('greeting can be disabled while fresh context is still supplied', async () => {
+  const f = await fixture({ live: { greeting_enabled: false } });
+  try {
+    await f.runtime.onCallCreated(request(f.store)); await f.flush();
+    expect(f.context).toHaveBeenCalledTimes(2);
+    expect(f.output.some(item => item.kind === 'thinking' && item.text.includes('Tests passed'))).toBe(true);
+    expect(f.instruction).not.toHaveBeenCalled();
+  } finally { await f.close(); }
+});
+
+test.each([false, true])('managed Responses result is audited once without external dispatch or duplicate speech (ended=%s)', async ended => {
+  const f = await fixture({ live: { delegation: 'responses' } });
+  try {
+    const call = request(f.store); await f.runtime.onCallCreated(call); await f.flush();
+    f.emit({ type: 'transcript', speaker: 'user', delta: 'Search for the latest release', startMs: 0, endMs: 10 });
+    f.emit({ type: 'delegation', id: 'managed-1', target: 'responses', offsetMs: 10 });
+    f.emit({ type: 'transcript', speaker: 'user', delta: ' please', startMs: 0, endMs: 10 });
+    f.emit({ type: 'delegation', id: 'managed-1', target: 'responses', offsetMs: 10 });
+    await new Promise(resolve => setTimeout(resolve, 120));
+    if (ended) await f.runtime.onEnd(f.store.getCall(call.call_id));
+    const event: LiveEvent = { type: 'managedResponse', delegationId: 'managed-1', responseId: 'resp_1', status: 'completed', summary: 'Release information.', evidenceUrls: ['https://example.com/releases'] };
+    f.emit(event); f.emit(event);
+    f.emit({ ...event, delegationId: 'unknown', responseId: 'resp_other' });
+    const record = f.store.getRecord(call.call_id);
+    expect(record.delegations).toHaveLength(1);
+    expect(record.results).toHaveLength(1);
+    expect(record.results[0]).toMatchObject({ business_ref: 'resp_1', status: 'completed', context_revision: 2, evidence_urls: ['https://example.com/releases'] });
+    await f.runtime.onResult(record.results[0]!);
+    expect(f.delegate).not.toHaveBeenCalled();
+    expect(f.output.filter(item => item.kind === 'commentary')).toHaveLength(0);
+    f.emit({ ...event, responseId: 'resp_2', summary: 'Updated response.' });
+    expect(f.store.getRecord(call.call_id).results).toHaveLength(2);
+    expect(f.store.getRecord(call.call_id).results[1]).toMatchObject({ business_ref: 'resp_2', revision: 2 });
   } finally { await f.close(); }
 });
